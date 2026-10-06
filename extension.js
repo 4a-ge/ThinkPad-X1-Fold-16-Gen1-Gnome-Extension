@@ -27,29 +27,28 @@ const BUILTIN_CONNECTORS = ['eDP-1', 'eDP-2', 'eDP-3', 'LVDS-1', 'DSI-1'];
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
 
-// Shrinks an actor that is sized by a MonitorConstraint (like the lock-screen
-// dialog) so it only uses the top part of the monitor. It has to be added
-// after the MonitorConstraint, constraints are applied in order.
+// Shrinks an actor that is sized by a MonitorConstraint (the lock-screen
+// dialog, the shell's modal dialogs) so it only uses the visible part of the
+// monitor. It has to be added after the MonitorConstraint, constraints are
+// applied in order. getInset() returns how many pixels to cut off the bottom.
 const BottomInsetConstraint = GObject.registerClass(
 class BottomInsetConstraint extends Clutter.Constraint {
-    _init() {
+    _init(getInset) {
         super._init();
-        this._inset = 0;
+        this._getInset = getInset;
     }
 
-    setInset(inset) {
-        if (inset === this._inset)
-            return;
-
-        this._inset = inset;
+    refresh() {
         this.get_actor()?.queue_relayout();
     }
 
     vfunc_update_allocation(actor, allocation) {
-        if (this._inset > 0) {
+        const inset = this._getInset();
+
+        if (inset > 0) {
             allocation.set_size(
                 allocation.get_width(),
-                Math.max(1, allocation.get_height() - this._inset));
+                Math.max(1, allocation.get_height() - inset));
         }
     }
 });
@@ -71,8 +70,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._keyboardAttached = false;
         this._overlay = null;
         this._overviewMargin = 0;
-        this._lockInsets = new Map();
-        this._lockIdleId = 0;
+        this._insetConstraints = new Map();
+        this._insetIdleId = 0;
         this._pollSourceId = 0;
         this._retrySourceId = 0;
         this._lastSentTabletMode = null;
@@ -111,7 +110,7 @@ export default class BottomHalfBlockerExtension extends Extension {
                 Main.sessionMode,
                 Main.sessionMode.connect('updated', () => {
                     this._syncOverview(true);
-                    this._attachLockInsets();
+                    this._attachInsets();
                 }),
             ],
             [
@@ -120,7 +119,7 @@ export default class BottomHalfBlockerExtension extends Extension {
             ],
         ];
 
-        this._watchLockScreen();
+        this._watchDialogs();
 
         this._refreshBlockedState();
 
@@ -144,20 +143,20 @@ export default class BottomHalfBlockerExtension extends Extension {
 
         this._signals = null;
 
-        if (this._lockIdleId) {
-            GLib.Source.remove(this._lockIdleId);
-            this._lockIdleId = 0;
+        if (this._insetIdleId) {
+            GLib.Source.remove(this._insetIdleId);
+            this._insetIdleId = 0;
         }
 
-        for (const [box, constraint] of this._lockInsets ?? []) {
+        for (const [box, constraint] of this._insetConstraints ?? []) {
             try {
                 box.remove_constraint(constraint);
                 box.queue_relayout();
             } catch (error) {
-                console.debug(`${this.uuid}: could not remove the lock-screen constraint: ${error}`);
+                console.debug(`${this.uuid}: could not remove an inset constraint: ${error}`);
             }
         }
-        this._lockInsets?.clear();
+        this._insetConstraints?.clear();
 
         if (this._pollSourceId) {
             GLib.Source.remove(this._pollSourceId);
@@ -329,13 +328,13 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
 
         this._syncOverview();
-        this._syncLockInsets();
+        this._syncInsets();
     }
 
     _syncGeometry() {
         this._syncOverlay();
         this._syncOverview();
-        this._syncLockInsets();
+        this._syncInsets();
     }
 
     _refreshBlockedState() {
@@ -447,19 +446,19 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overlay.show();
     }
 
-    // How much of the primary monitor is covered, i.e. how far the overview and
-    // the lock screen have to shrink. Both are sized to the primary monitor.
-    _getPrimaryInset() {
-        if (!this._blocked)
+    // How much of the given monitor is covered by the overlay, i.e. how far
+    // things that are sized to that whole monitor have to shrink.
+    _getInsetForMonitor(index) {
+        if (!this._blocked || index === undefined || index < 0)
             return 0;
 
         const geometry = this._getBlockedGeometry();
-        const primary = Main.layoutManager.primaryMonitor;
+        return geometry && geometry.monitor.index === index ? geometry.height : 0;
+    }
 
-        if (geometry && primary && geometry.monitor.index === primary.index)
-            return geometry.height;
-
-        return 0;
+    // The overview and the lock screen are sized to the primary monitor.
+    _getPrimaryInset() {
+        return this._getInsetForMonitor(Main.layoutManager.primaryMonitor?.index);
     }
 
     // The overview lays itself out over the whole primary monitor (struts only
@@ -489,56 +488,68 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    // The unlock dialog is created again on every lock, so its children are
-    // picked up as they are added.
-    _watchLockScreen() {
-        const group = Main.screenShield?._lockDialogGroup;
-        if (!group)
-            return;
+    // The unlock dialog and the shell's modal dialogs (shutdown/restart,
+    // password prompts, ...) are created on demand and centre themselves on
+    // the whole monitor, so they are picked up as they are added.
+    _watchDialogs() {
+        for (const group of this._getDialogGroups()) {
+            this._signals.push([
+                group,
+                group.connect('child-added', () => this._scheduleInsetAttach()),
+            ]);
+        }
 
-        this._signals.push([
-            group,
-            group.connect('child-added', () => this._scheduleLockInsetAttach()),
-        ]);
-        this._attachLockInsets();
+        this._attachInsets();
     }
 
-    _scheduleLockInsetAttach() {
-        if (this._lockIdleId)
+    _getDialogGroups() {
+        return [
+            Main.screenShield?._lockDialogGroup,
+            Main.layoutManager.modalDialogGroup,
+        ].filter(group => group);
+    }
+
+    _scheduleInsetAttach() {
+        if (this._insetIdleId)
             return;
 
-        // The dialog builds its contents right after being added.
-        this._lockIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            this._lockIdleId = 0;
-            this._attachLockInsets();
+        // The dialogs build their contents right after being added.
+        this._insetIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._insetIdleId = 0;
+            this._attachInsets();
             return GLib.SOURCE_REMOVE;
         });
     }
 
-    _attachLockInsets() {
-        const group = Main.screenShield?._lockDialogGroup;
-        if (!group)
+    _addInsetConstraint(actor, getInset) {
+        if (!actor || this._insetConstraints.has(actor) || !actor.get_constraints?.().length)
             return;
 
-        for (const dialog of group.get_children()) {
-            // The dialog's main box (clock, prompt, notifications) is its last
-            // child and is sized by a monitor constraint.
-            const box = dialog.get_last_child?.();
-            if (!box || this._lockInsets.has(box) || !box.get_constraints?.().length)
-                continue;
+        const constraint = new BottomInsetConstraint(getInset);
+        actor.add_constraint(constraint);
+        actor.connect('destroy', () => this._insetConstraints.delete(actor));
+        this._insetConstraints.set(actor, constraint);
+    }
 
-            const constraint = new BottomInsetConstraint();
-            constraint.setInset(this._getPrimaryInset());
-            box.add_constraint(constraint);
-            box.connect('destroy', () => this._lockInsets.delete(box));
-            this._lockInsets.set(box, constraint);
+    _attachInsets() {
+        // Lock screen: the dialog's main box (clock, prompt, notifications) is
+        // its last child and is sized by a monitor constraint on the primary monitor.
+        const lockGroup = Main.screenShield?._lockDialogGroup;
+        for (const dialog of lockGroup?.get_children() ?? [])
+            this._addInsetConstraint(dialog.get_last_child?.(), () => this._getPrimaryInset());
+
+        // Modal dialogs: the bin around the dialog follows the monitor the
+        // dialog is opened on.
+        for (const dialog of Main.layoutManager.modalDialogGroup?.get_children() ?? []) {
+            this._addInsetConstraint(
+                dialog._backgroundBin,
+                () => this._getInsetForMonitor(dialog._monitorConstraint?.index)
+            );
         }
     }
 
-    _syncLockInsets() {
-        const inset = this._getPrimaryInset();
-
-        for (const constraint of this._lockInsets.values())
-            constraint.setInset(inset);
+    _syncInsets() {
+        for (const constraint of this._insetConstraints.values())
+            constraint.refresh();
     }
 }
