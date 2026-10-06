@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.bottom-half-blocker" path="/org/gnome/shell/extensions/bottom-half-blocker/">
+    <key name="toggle-mode" type="as">
+      <default><![CDATA[['<Super><Shift>t']]]></default>
+      <summary>Toggle tablet/laptop mode</summary>
+    </key>
+  </schema>
+</schemalist>
