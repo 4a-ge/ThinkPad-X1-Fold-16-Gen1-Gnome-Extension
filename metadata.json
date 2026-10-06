@@ -2,6 +2,17 @@
   "uuid": "bottom-half-blocker@local",
   "name": "Bottom Half Blocker",
   "description": "Masks the bottom half of the primary monitor with a black shell overlay and reserves that space from normal window placement.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "version": 1
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
+  "version": 1,
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ]
 }

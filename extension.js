@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -26,6 +27,33 @@ const BUILTIN_CONNECTORS = ['eDP-1', 'eDP-2', 'eDP-3', 'LVDS-1', 'DSI-1'];
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
 
+// Shrinks an actor that is sized by a MonitorConstraint (like the lock-screen
+// dialog) so it only uses the top part of the monitor. It has to be added
+// after the MonitorConstraint, constraints are applied in order.
+const BottomInsetConstraint = GObject.registerClass(
+class BottomInsetConstraint extends Clutter.Constraint {
+    _init() {
+        super._init();
+        this._inset = 0;
+    }
+
+    setInset(inset) {
+        if (inset === this._inset)
+            return;
+
+        this._inset = inset;
+        this.get_actor()?.queue_relayout();
+    }
+
+    vfunc_update_allocation(actor, allocation) {
+        if (this._inset > 0) {
+            allocation.set_size(
+                allocation.get_width(),
+                Math.max(1, allocation.get_height() - this._inset));
+        }
+    }
+});
+
 export default class BottomHalfBlockerExtension extends Extension {
     constructor(metadata) {
         super(metadata);
@@ -43,6 +71,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._keyboardAttached = false;
         this._overlay = null;
         this._overviewMargin = 0;
+        this._lockInsets = new Map();
+        this._lockIdleId = 0;
         this._pollSourceId = 0;
         this._retrySourceId = 0;
         this._lastSentTabletMode = null;
@@ -74,7 +104,23 @@ export default class BottomHalfBlockerExtension extends Extension {
                 Main.layoutManager,
                 Main.layoutManager.connect('monitors-changed', () => this._syncGeometry()),
             ],
+            // The overview and the lock screen lay themselves out as if the
+            // whole monitor were free, so they are re-adjusted whenever the
+            // session changes (lock/unlock) and right before the overview opens.
+            [
+                Main.sessionMode,
+                Main.sessionMode.connect('updated', () => {
+                    this._syncOverview(true);
+                    this._attachLockInsets();
+                }),
+            ],
+            [
+                Main.overview,
+                Main.overview.connect('showing', () => this._syncOverview(true)),
+            ],
         ];
+
+        this._watchLockScreen();
 
         this._refreshBlockedState();
 
@@ -97,6 +143,21 @@ export default class BottomHalfBlockerExtension extends Extension {
             source.disconnect(signalId);
 
         this._signals = null;
+
+        if (this._lockIdleId) {
+            GLib.Source.remove(this._lockIdleId);
+            this._lockIdleId = 0;
+        }
+
+        for (const [box, constraint] of this._lockInsets ?? []) {
+            try {
+                box.remove_constraint(constraint);
+                box.queue_relayout();
+            } catch (error) {
+                console.debug(`${this.uuid}: could not remove the lock-screen constraint: ${error}`);
+            }
+        }
+        this._lockInsets?.clear();
 
         if (this._pollSourceId) {
             GLib.Source.remove(this._pollSourceId);
@@ -159,7 +220,8 @@ export default class BottomHalfBlockerExtension extends Extension {
                 KEYBINDING_NAME,
                 this._settings,
                 Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
-                Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
+                Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW |
+                    Shell.ActionMode.LOCK_SCREEN | Shell.ActionMode.UNLOCK_SCREEN,
                 () => this._toggleMode()
             );
             this._keybindingAdded = true;
@@ -267,11 +329,13 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
 
         this._syncOverview();
+        this._syncLockInsets();
     }
 
     _syncGeometry() {
         this._syncOverlay();
         this._syncOverview();
+        this._syncLockInsets();
     }
 
     _refreshBlockedState() {
@@ -383,22 +447,30 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overlay.show();
     }
 
+    // How much of the primary monitor is covered, i.e. how far the overview and
+    // the lock screen have to shrink. Both are sized to the primary monitor.
+    _getPrimaryInset() {
+        if (!this._blocked)
+            return 0;
+
+        const geometry = this._getBlockedGeometry();
+        const primary = Main.layoutManager.primaryMonitor;
+
+        if (geometry && primary && geometry.monitor.index === primary.index)
+            return geometry.height;
+
+        return 0;
+    }
+
     // The overview lays itself out over the whole primary monitor (struts only
     // move its top edge), so it would extend under the overlay. A bottom
     // margin on its controls keeps the dash, workspaces and app grid in the
-    // visible half.
-    _syncOverview() {
-        let margin = 0;
+    // visible half. With force the margin is re-applied even if unchanged, to
+    // make the overview lay itself out again (after unlock, before opening).
+    _syncOverview(force = false) {
+        const margin = this._getPrimaryInset();
 
-        if (this._blocked) {
-            const geometry = this._getBlockedGeometry();
-            const primary = Main.layoutManager.primaryMonitor;
-
-            if (geometry && primary && geometry.monitor.index === primary.index)
-                margin = geometry.height;
-        }
-
-        if (margin === this._overviewMargin)
+        if (margin === this._overviewMargin && !force)
             return;
 
         const controls = Main.overview?._overview?.controls;
@@ -406,10 +478,67 @@ export default class BottomHalfBlockerExtension extends Extension {
             return;
 
         try {
+            if (force && margin > 0)
+                controls.margin_bottom = 0;
+
             controls.margin_bottom = margin;
+            controls.queue_relayout();
             this._overviewMargin = margin;
         } catch (error) {
             console.warn(`${this.uuid}: could not adjust the overview: ${error.message}`);
         }
+    }
+
+    // The unlock dialog is created again on every lock, so its children are
+    // picked up as they are added.
+    _watchLockScreen() {
+        const group = Main.screenShield?._lockDialogGroup;
+        if (!group)
+            return;
+
+        this._signals.push([
+            group,
+            group.connect('child-added', () => this._scheduleLockInsetAttach()),
+        ]);
+        this._attachLockInsets();
+    }
+
+    _scheduleLockInsetAttach() {
+        if (this._lockIdleId)
+            return;
+
+        // The dialog builds its contents right after being added.
+        this._lockIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._lockIdleId = 0;
+            this._attachLockInsets();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _attachLockInsets() {
+        const group = Main.screenShield?._lockDialogGroup;
+        if (!group)
+            return;
+
+        for (const dialog of group.get_children()) {
+            // The dialog's main box (clock, prompt, notifications) is its last
+            // child and is sized by a monitor constraint.
+            const box = dialog.get_last_child?.();
+            if (!box || this._lockInsets.has(box) || !box.get_constraints?.().length)
+                continue;
+
+            const constraint = new BottomInsetConstraint();
+            constraint.setInset(this._getPrimaryInset());
+            box.add_constraint(constraint);
+            box.connect('destroy', () => this._lockInsets.delete(box));
+            this._lockInsets.set(box, constraint);
+        }
+    }
+
+    _syncLockInsets() {
+        const inset = this._getPrimaryInset();
+
+        for (const constraint of this._lockInsets.values())
+            constraint.setInset(inset);
     }
 }
