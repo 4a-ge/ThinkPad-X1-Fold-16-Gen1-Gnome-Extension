@@ -37,12 +37,6 @@ const DBUS_TIMEOUT_MILLISECONDS = 2000;
 // Fraction of the built-in monitor, from the bottom, that the keyboard covers.
 const COVERED_FRACTION = 0.5;
 
-// Mode popup shown after the shortcut.
-const FEEDBACK_MILLISECONDS = 1500;
-const FEEDBACK_TOP_FRACTION = 0.12;
-const FEEDBACK_ICON_SIZE = 32;
-const FEEDBACK_GAP_PIXELS = 12;
-
 // Shrinks an actor that is sized by a MonitorConstraint (the lock-screen
 // dialog, the shell's modal dialogs) so it only uses the visible part of the
 // monitor. It has to be added after the MonitorConstraint, constraints are
@@ -88,8 +82,6 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overviewMargin = 0;
         this._insetConstraints = new Map();
         this._insetIdleId = 0;
-        this._feedback = null;
-        this._feedbackSourceId = 0;
         this._pollSourceId = 0;
         this._retrySourceId = 0;
         this._lastSentTabletMode = null;
@@ -165,8 +157,6 @@ export default class BottomHalfBlockerExtension extends Extension {
             GLib.Source.remove(this._insetIdleId);
             this._insetIdleId = 0;
         }
-
-        this._clearFeedback();
 
         for (const [box, constraint] of this._insetConstraints ?? []) {
             try {
@@ -256,7 +246,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    _toggleMode(showFeedback = false) {
+    _toggleMode(showOsd = false) {
         if (this._hasKeyboardAttachedState) {
             // With keyboard detection the only manual override is forcing
             // tablet mode while the keyboard is attached; with the keyboard
@@ -271,63 +261,24 @@ export default class BottomHalfBlockerExtension extends Extension {
 
         this._syncState();
 
-        if (showFeedback)
-            this._showFeedback();
+        if (showOsd)
+            this._showModeOsd();
     }
 
-    // The shell's own volume-style popup sits at the bottom of the screen, i.e.
-    // under the overlay in laptop mode, so a small one is shown in the visible
-    // top half instead.
-    _showFeedback() {
-        this._clearFeedback();
-
+    // Shows the shell's own volume-style popup. It is moved into the visible
+    // half like the other popups, see _attachOsdInsets().
+    _showModeOsd() {
         const monitor = this._findBuiltinMonitor();
         if (!monitor || !this._icons)
             return;
 
         const tablet = this._wantedTabletMode;
-        const box = new St.BoxLayout({
-            style_class: 'osd-window',
-            orientation: Clutter.Orientation.HORIZONTAL,
-            reactive: false,
-        });
-        box.add_child(new St.Icon({
-            gicon: tablet ? this._icons.tablet : this._icons.laptop,
-            icon_size: FEEDBACK_ICON_SIZE,
-            y_align: Clutter.ActorAlign.CENTER,
-        }));
-        box.add_child(new St.Label({
-            text: tablet ? 'Tablet mode' : 'Laptop mode',
-            style: `margin-left: ${FEEDBACK_GAP_PIXELS}px; font-weight: bold;`,
-            y_align: Clutter.ActorAlign.CENTER,
-        }));
-
-        Main.uiGroup.add_child(box);
-
-        const [, naturalWidth] = box.get_preferred_width(-1);
-        box.set_position(
-            Math.round(monitor.x + (monitor.width - naturalWidth) / 2),
-            Math.round(monitor.y + monitor.height * FEEDBACK_TOP_FRACTION));
-
-        this._feedback = box;
-        this._feedbackSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FEEDBACK_MILLISECONDS, () => {
-            this._feedbackSourceId = 0;
-            this._clearFeedback();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    _clearFeedback() {
-        if (this._feedbackSourceId) {
-            GLib.Source.remove(this._feedbackSourceId);
-            this._feedbackSourceId = 0;
-        }
-
-        if (this._feedback) {
-            Main.uiGroup.remove_child(this._feedback);
-            this._feedback.destroy();
-            this._feedback = null;
-        }
+        Main.osdWindowManager.showOne(
+            monitor.index,
+            tablet ? this._icons.tablet : this._icons.laptop,
+            tablet ? 'Tablet mode' : 'Laptop mode',
+            null,
+            null);
     }
 
     _callDaemon(tabletMode, cancellable, callback) {
@@ -416,6 +367,7 @@ export default class BottomHalfBlockerExtension extends Extension {
     }
 
     _syncGeometry() {
+        this._attachInsets();
         this._syncOverlay();
         this._syncOverview();
         this._syncInsets();
@@ -629,6 +581,18 @@ export default class BottomHalfBlockerExtension extends Extension {
                 dialog._backgroundBin,
                 () => this._getInsetForMonitor(dialog._monitorConstraint?.index)
             );
+        }
+
+        this._attachOsdInsets();
+    }
+
+    _attachOsdInsets() {
+        // The volume/brightness popups sit at the bottom of each monitor,
+        // which is the covered half. There is one per monitor, created again
+        // when the monitors change.
+        for (const osd of Main.osdWindowManager?._osdWindows ?? []) {
+            if (osd)
+                this._addInsetConstraint(osd, () => this._getInsetForMonitor(osd._monitorIndex));
         }
     }
 

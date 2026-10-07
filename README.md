@@ -54,7 +54,8 @@ icon still works).
 - **Click or tap the panel icon** to switch between tablet and laptop mode.
   The icon shows the current mode.
 - **<kbd>Super</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>** does the same and shows a
-  short "Tablet mode" / "Laptop mode" popup in the visible half of the screen.
+  short "Tablet mode" / "Laptop mode" popup, the same one the shell uses for volume
+  and brightness, in the visible half of the screen.
   The shortcut is also enabled in the overview and on the lock screen. To change it:
   ```sh
   gsettings --schemadir ~/.local/share/gnome-shell/extensions/bottom-half-blocker@local/schemas \
@@ -77,7 +78,7 @@ stock Fedora kernel does not provide this file.
 | Overlay | A black actor over the bottom half of the built-in monitor, registered as shell chrome with a strut, so maximized windows stay in the top half and the covered area does not receive input. |
 | Daemon | Calls `SetTabletMode` on the system bus whenever the mode changes and at startup. Failed calls are retried every 2 seconds. |
 | Overview | Adds a bottom margin to the overview controls so the dash, workspaces and app grid stay in the visible half. It is re-applied on session changes and before the overview opens. |
-| Lock screen, dialogs | Adds a constraint that shrinks the unlock dialog and each modal shell dialog to the visible half, only on the built-in monitor. |
+| Lock screen, dialogs, popups | Adds a constraint that shrinks the unlock dialog, each modal shell dialog and the volume/brightness popups (OSD) to the visible half, only on the built-in monitor. |
 | Shortcut | A GSettings keybinding (`toggle-mode`). |
 
 The extension runs in the `user` and `unlock-dialog` session modes, so it stays
@@ -86,11 +87,17 @@ active while the screen is locked.
 ## Limitations
 
 - It relies on private shell internals: `Main.overview._overview.controls`,
-  `Main.screenShield._lockDialogGroup`, and `_backgroundBin` /
-  `_monitorConstraint` of modal dialogs. Each use is guarded and degrades to
+  `Main.screenShield._lockDialogGroup`, `_backgroundBin` /
+  `_monitorConstraint` of modal dialogs, and `Main.osdWindowManager._osdWindows`. Each use is guarded and degrades to
   doing nothing, but a shell update can still change the behavior.
 - Prompts that are not shell dialogs (for example the GNOME Keyring unlock
   prompt, or an app's own dialogs) keep their normal position.
+- Fullscreen windows always get the whole monitor and cannot be fitted to the
+  visible half. The overlay hides while a window is fullscreen on the built-in
+  monitor, so a fullscreen video is drawn across the whole screen. In Firefox,
+  setting `full-screen-api.ignore-widgets` to `true` in `about:config` makes web
+  fullscreen (videos) fill only the browser window, which stays in the visible
+  half.
 - The covered area is exactly half of the built-in monitor
   (`COVERED_FRACTION` in `extension.js`).
 - The mode is switched by hand because no signal for the keyboard is available
