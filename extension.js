@@ -26,6 +26,7 @@ const BUILTIN_CONNECTORS = ['eDP-1', 'eDP-2', 'eDP-3', 'LVDS-1', 'DSI-1'];
 
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
+const FEEDBACK_MILLISECONDS = 1500;
 
 // Shrinks an actor that is sized by a MonitorConstraint (the lock-screen
 // dialog, the shell's modal dialogs) so it only uses the visible part of the
@@ -72,6 +73,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overviewMargin = 0;
         this._insetConstraints = new Map();
         this._insetIdleId = 0;
+        this._feedback = null;
+        this._feedbackSourceId = 0;
         this._pollSourceId = 0;
         this._retrySourceId = 0;
         this._lastSentTabletMode = null;
@@ -148,6 +151,8 @@ export default class BottomHalfBlockerExtension extends Extension {
             this._insetIdleId = 0;
         }
 
+        this._clearFeedback();
+
         for (const [box, constraint] of this._insetConstraints ?? []) {
             try {
                 box.remove_constraint(constraint);
@@ -221,7 +226,7 @@ export default class BottomHalfBlockerExtension extends Extension {
                 Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
                 Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW |
                     Shell.ActionMode.LOCK_SCREEN | Shell.ActionMode.UNLOCK_SCREEN,
-                () => this._toggleMode()
+                () => this._toggleMode(true)
             );
             this._keybindingAdded = true;
         } catch (error) {
@@ -230,7 +235,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    _toggleMode() {
+    _toggleMode(showFeedback = false) {
         if (this._hasKeyboardAttachedState) {
             // With keyboard detection the only manual override is forcing
             // tablet mode while the keyboard is attached; with the keyboard
@@ -244,6 +249,64 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
 
         this._syncState();
+
+        if (showFeedback)
+            this._showFeedback();
+    }
+
+    // The shell's own volume-style popup sits at the bottom of the screen, i.e.
+    // under the overlay in laptop mode, so a small one is shown in the visible
+    // top half instead.
+    _showFeedback() {
+        this._clearFeedback();
+
+        const monitor = this._findBuiltinMonitor();
+        if (!monitor || !this._icons)
+            return;
+
+        const tablet = this._wantedTabletMode;
+        const box = new St.BoxLayout({
+            style_class: 'osd-window',
+            orientation: Clutter.Orientation.HORIZONTAL,
+            reactive: false,
+        });
+        box.add_child(new St.Icon({
+            gicon: tablet ? this._icons.tablet : this._icons.laptop,
+            icon_size: 32,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        box.add_child(new St.Label({
+            text: tablet ? 'Tablet mode' : 'Laptop mode',
+            style: 'margin-left: 12px; font-weight: bold;',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+
+        Main.uiGroup.add_child(box);
+
+        const [, naturalWidth] = box.get_preferred_width(-1);
+        box.set_position(
+            Math.round(monitor.x + (monitor.width - naturalWidth) / 2),
+            Math.round(monitor.y + monitor.height * 0.12));
+
+        this._feedback = box;
+        this._feedbackSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FEEDBACK_MILLISECONDS, () => {
+            this._feedbackSourceId = 0;
+            this._clearFeedback();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _clearFeedback() {
+        if (this._feedbackSourceId) {
+            GLib.Source.remove(this._feedbackSourceId);
+            this._feedbackSourceId = 0;
+        }
+
+        if (this._feedback) {
+            Main.uiGroup.remove_child(this._feedback);
+            this._feedback.destroy();
+            this._feedback = null;
+        }
     }
 
     _callDaemon(tabletMode, cancellable, callback) {
