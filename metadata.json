@@ -1,18 +1,9 @@
 {
   "uuid": "bottom-half-blocker@local",
   "name": "Bottom Half Blocker",
-  "description": "Masks the bottom half of the primary monitor with a black shell overlay and reserves that space from normal window placement.",
-  "shell-version": [
-    "45",
-    "46",
-    "47",
-    "48",
-    "49",
-    "50"
-  ],
-  "version": 1,
-  "session-modes": [
-    "user",
-    "unlock-dialog"
-  ]
+  "description": "Tablet/laptop mode toggle for the ThinkPad X1 Fold 16. Covers the keyboard half of the built-in screen with a black overlay, keeps windows, the overview, the lock screen and shell dialogs in the visible half, and tells the tablet-mode daemon (org.probos.TabletMode) so GNOME switches its tablet mode too. Toggle by clicking the panel icon or with Super+Shift+T. Based on the Bottom Half Blocker extension by somefoo (GPL-3.0).",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "session-modes": ["user", "unlock-dialog"],
+  "settings-schema": "org.gnome.shell.extensions.bottom-half-blocker",
+  "version": 2
 }

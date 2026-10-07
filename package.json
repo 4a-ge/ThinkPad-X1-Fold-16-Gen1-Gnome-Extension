@@ -1,0 +1,14 @@
+{
+  "name": "bottom-half-blocker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./tests/register.mjs tests/test.mjs",
+    "lint": "eslint extension.js tests"
+  },
+  "devDependencies": {
+    "@eslint/config-helpers": "^0.7.0",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0"
+  }
+}

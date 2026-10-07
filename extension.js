@@ -26,7 +26,16 @@ const BUILTIN_CONNECTORS = ['eDP-1', 'eDP-2', 'eDP-3', 'LVDS-1', 'DSI-1'];
 
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
+const DBUS_TIMEOUT_MILLISECONDS = 2000;
+
+// Fraction of the built-in monitor, from the bottom, that the keyboard covers.
+const COVERED_FRACTION = 0.5;
+
+// Mode popup shown after the shortcut.
 const FEEDBACK_MILLISECONDS = 1500;
+const FEEDBACK_TOP_FRACTION = 0.12;
+const FEEDBACK_ICON_SIZE = 32;
+const FEEDBACK_GAP_PIXELS = 12;
 
 // Shrinks an actor that is sized by a MonitorConstraint (the lock-screen
 // dialog, the shell's modal dialogs) so it only uses the visible part of the
@@ -220,7 +229,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         // entry keeps working without it.
         try {
             this._settings = this.getSettings(SETTINGS_SCHEMA);
-            Main.wm.addKeybinding(
+            const action = Main.wm.addKeybinding(
                 KEYBINDING_NAME,
                 this._settings,
                 Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
@@ -228,6 +237,12 @@ export default class BottomHalfBlockerExtension extends Extension {
                     Shell.ActionMode.LOCK_SCREEN | Shell.ActionMode.UNLOCK_SCREEN,
                 () => this._toggleMode(true)
             );
+
+            // The shell reports a refused registration (e.g. the name is
+            // already taken) only through this return value.
+            if (action === Meta.KeyBindingAction.NONE)
+                throw new Error(`the shell did not register the "${KEYBINDING_NAME}" shortcut`);
+
             this._keybindingAdded = true;
         } catch (error) {
             this._settings = null;
@@ -272,12 +287,12 @@ export default class BottomHalfBlockerExtension extends Extension {
         });
         box.add_child(new St.Icon({
             gicon: tablet ? this._icons.tablet : this._icons.laptop,
-            icon_size: 32,
+            icon_size: FEEDBACK_ICON_SIZE,
             y_align: Clutter.ActorAlign.CENTER,
         }));
         box.add_child(new St.Label({
             text: tablet ? 'Tablet mode' : 'Laptop mode',
-            style: 'margin-left: 12px; font-weight: bold;',
+            style: `margin-left: ${FEEDBACK_GAP_PIXELS}px; font-weight: bold;`,
             y_align: Clutter.ActorAlign.CENTER,
         }));
 
@@ -286,7 +301,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         const [, naturalWidth] = box.get_preferred_width(-1);
         box.set_position(
             Math.round(monitor.x + (monitor.width - naturalWidth) / 2),
-            Math.round(monitor.y + monitor.height * 0.12));
+            Math.round(monitor.y + monitor.height * FEEDBACK_TOP_FRACTION));
 
         this._feedback = box;
         this._feedbackSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FEEDBACK_MILLISECONDS, () => {
@@ -318,7 +333,7 @@ export default class BottomHalfBlockerExtension extends Extension {
             new GLib.Variant('(b)', [tabletMode]),
             null,
             Gio.DBusCallFlags.NONE,
-            2000,
+            DBUS_TIMEOUT_MILLISECONDS,
             cancellable,
             callback
         );
@@ -460,7 +475,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         if (!monitor)
             return null;
 
-        const height = Math.floor(monitor.height / 2);
+        const height = Math.floor(monitor.height * COVERED_FRACTION);
         return {monitor, height, y: monitor.y + monitor.height - height};
     }
 
