@@ -1,3 +1,9 @@
+// Bottom Half Blocker: tablet/laptop toggle for the ThinkPad X1 Fold 16.
+//
+// Modified version of the Bottom Half Blocker extension by somefoo,
+// https://github.com/somefoo/ThinkPad-X1-Fold-16-Gen1-Gnome-Extension
+// Licensed under the GPL-3.0, like the original (see LICENSE).
+
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
