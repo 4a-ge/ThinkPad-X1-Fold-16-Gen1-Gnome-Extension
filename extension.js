@@ -33,11 +33,9 @@ const KEYBINDING_NAME = 'toggle-mode';
 const BUILTIN_CONNECTORS = ['eDP-1', 'eDP-2', 'eDP-3', 'LVDS-1', 'DSI-1'];
 
 // In laptop mode the keyboard covers the lower half, so there is exactly one
-// usable orientation. Rotation is locked (this stops auto-rotation, including
-// the Screen Rotate extension) and the built-in panel is turned to this
-// transform (0 = normal landscape).
-const ORIENTATION_LOCK_SCHEMA = 'org.gnome.settings-daemon.peripherals.touchscreen';
-const ORIENTATION_LOCK_KEY = 'orientation-lock';
+// usable orientation: the built-in panel is turned to this transform
+// (0 = normal landscape). The auto-rotate setting is never touched, GNOME's
+// tablet mode being off already stops auto-rotation.
 const LAPTOP_TRANSFORM = 0;
 
 const DISPLAY_CONFIG_NAME = 'org.gnome.Mutter.DisplayConfig';
@@ -107,8 +105,6 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._daemonRequestInFlight = false;
         this._daemonWarned = false;
         this._keybindingAdded = false;
-        this._rotationLockedByUs = false;
-        this._orientationSettings = this._loadOrientationSettings();
         this._cancellable = new Gio.Cancellable();
         this._keyboardAttachedFile = Gio.File.new_for_path(KEYBOARD_ATTACHED_PATH);
         this._hasKeyboardAttachedState = this._keyboardAttachedFile.query_exists(null);
@@ -195,8 +191,6 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._blocked = false;
         this._destroyOverlay();
         this._syncOverview();
-        this._unlockRotation();
-        this._orientationSettings = null;
 
         if (this._button) {
             this._button.destroy();
@@ -377,54 +371,11 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._syncRotation();
     }
 
-    _loadOrientationSettings() {
-        const source = Gio.SettingsSchemaSource.get_default();
-        if (!source?.lookup(ORIENTATION_LOCK_SCHEMA, true)) {
-            console.debug(`${this.uuid}: schema ${ORIENTATION_LOCK_SCHEMA} not found, rotation is not locked`);
-            return null;
-        }
-
-        return new Gio.Settings({schema_id: ORIENTATION_LOCK_SCHEMA});
-    }
-
-    // Laptop mode: lock rotation and turn the panel to its one orientation.
-    // Tablet mode: give rotation back.
+    // Laptop mode: turn the panel to its one orientation. Tablet mode leaves
+    // the rotation alone.
     _syncRotation() {
-        if (this._blocked) {
-            this._lockRotation();
+        if (this._blocked)
             this._rotateBuiltinMonitor(LAPTOP_TRANSFORM);
-        } else {
-            this._unlockRotation();
-        }
-    }
-
-    // An already locked rotation is left alone and stays locked afterwards.
-    _lockRotation() {
-        if (!this._orientationSettings || this._rotationLockedByUs)
-            return;
-
-        try {
-            if (this._orientationSettings.get_boolean(ORIENTATION_LOCK_KEY))
-                return;
-
-            this._orientationSettings.set_boolean(ORIENTATION_LOCK_KEY, true);
-            this._rotationLockedByUs = true;
-        } catch (error) {
-            console.warn(`${this.uuid}: could not lock the rotation: ${error.message}`);
-        }
-    }
-
-    _unlockRotation() {
-        if (!this._rotationLockedByUs)
-            return;
-
-        this._rotationLockedByUs = false;
-
-        try {
-            this._orientationSettings?.set_boolean(ORIENTATION_LOCK_KEY, false);
-        } catch (error) {
-            console.warn(`${this.uuid}: could not unlock the rotation: ${error.message}`);
-        }
     }
 
     // Sets the transform of the built-in monitor through Mutter's display

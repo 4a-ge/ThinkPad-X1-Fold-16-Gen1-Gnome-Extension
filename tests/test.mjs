@@ -15,7 +15,7 @@ const controls = Main.overview._overview.controls;
 const ext = new Ext({});
 ext.enable(); flush();
 assert.deepEqual(calls(), [true], 'initial state sent once');
-assert.equal(globalThis.__lock, false, 'rotation untouched in tablet mode');
+assert.equal(globalThis.__lock, false, 'auto-rotate never touched');
 assert.equal(globalThis.__applied.length, 0);
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
 assert.equal(ext._button.accessible_name, 'Tablet mode');
@@ -27,7 +27,7 @@ assert.equal(ext._icon.gicon, '/ext/icons/laptop-symbolic.svg');
 assert.equal(controls.margin_bottom, 1280, 'overview margin = half of built-in monitor');
 assert.deepEqual(ext._overlay.pos, [0, 1280]);
 assert.deepEqual(calls(), [true, false]);
-assert.equal(globalThis.__lock, true, 'laptop mode locks rotation');
+assert.equal(globalThis.__lock, false, 'laptop mode leaves auto-rotate alone');
 assert.equal(globalThis.__applied.length, 1, 'laptop mode rotates the panel');
 const [serial, method, config] = globalThis.__applied[0];
 assert.equal(serial, 7); assert.equal(method, 1, 'temporary, not persistent');
@@ -35,7 +35,7 @@ assert.deepEqual(config, [[0, 0, 1, 0, true, [['eDP-1', 'm2', {}]]]], 'normal la
 assert.equal(globalThis.__transform, 0);
 
 click(); flush();
-assert.equal(globalThis.__lock, false, 'tablet mode gives rotation back');
+assert.equal(globalThis.__lock, false, 'tablet mode leaves auto-rotate alone');
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
 assert.equal(controls.margin_bottom, 0, 'margin removed in tablet mode');
 assert.equal(Main.layoutManager.chrome.length, 0);
@@ -143,7 +143,7 @@ assert.equal(controls.margin_bottom, 1280, 'forced resync restores a reset margi
 
 globalThis.__lock = false;
 ext.disable(); flush();
-assert.equal(globalThis.__lock, false, 'rotation lock released on disable');
+assert.equal(globalThis.__lock, false, 'auto-rotate untouched on disable');
 assert.equal(dlg.box.constraints.length, 1, 'lock constraints removed on disable');
 assert.equal(MonitorConstraint.prototype._init, originalInit, 'monitor constraint hook removed on disable');
 assert.equal(SwitcherPopup.prototype.show, originalShow, 'switcher hook removed on disable');
@@ -195,7 +195,7 @@ assert.equal(ext2._wantedTabletMode, true, 'click forces tablet while attached')
 ext2.disable(); flush();
 assert.equal(Object.keys(T).length, 0);
 
-// rotation: already normal -> no call; an existing user lock is kept; failures only warn
+// rotation: already normal -> no call; the auto-rotate setting is never written; failures only warn
 globalThis.__applied.length = 0; globalThis.__lock = true; globalThis.__warns.length = 0;
 const ext5 = new Ext({}); ext5.enable(); flush();          // starts in laptop mode (choice kept)
 if (ext5._wantedTabletMode) { click(); flush(); }
@@ -210,10 +210,4 @@ assert.ok(globalThis.__warns.some(w => w.includes('could not rotate')), 'rotatio
 globalThis.__rotateFail = false;
 ext6.disable(); flush();
 assert.equal(globalThis.__lock, false);
-globalThis.__noOrientationSchema = true; globalThis.__lock = false;
-const ext7 = new Ext({}); ext7.enable(); flush();
-if (ext7._wantedTabletMode) { click(); flush(); }
-assert.equal(globalThis.__lock, false, 'no schema: lock skipped');
-ext7.disable(); flush();
-globalThis.__noOrientationSchema = false;
 console.log('ALL TESTS PASSED');
