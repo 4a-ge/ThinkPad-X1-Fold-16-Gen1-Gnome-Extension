@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import Ext from '../extension.js';
 import * as Main from './stubs/main.js';
+import {MonitorConstraint} from './stubs/layout.js';
+import {SwitcherPopup} from './stubs/switcherPopup.js';
+const originalInit = MonitorConstraint.prototype._init;
+const originalShow = SwitcherPopup.prototype.show;
 const flush = () => { while (globalThis.__pending.length) globalThis.__pending.shift()(); };
 const calls = () => globalThis.__log.map(c => c.value);
 const click = () => globalThis.__gestures.at(-1).handlers.recognize();
@@ -11,7 +15,7 @@ const controls = Main.overview._overview.controls;
 const ext = new Ext({});
 ext.enable(); flush();
 assert.deepEqual(calls(), [true], 'initial state sent once');
-assert.equal(globalThis.__lock, false, 'rotation untouched in tablet mode');
+assert.equal(globalThis.__lock, false, 'auto-rotate never touched');
 assert.equal(globalThis.__applied.length, 0);
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
 assert.equal(ext._button.accessible_name, 'Tablet mode');
@@ -23,7 +27,7 @@ assert.equal(ext._icon.gicon, '/ext/icons/laptop-symbolic.svg');
 assert.equal(controls.margin_bottom, 1280, 'overview margin = half of built-in monitor');
 assert.deepEqual(ext._overlay.pos, [0, 1280]);
 assert.deepEqual(calls(), [true, false]);
-assert.equal(globalThis.__lock, true, 'laptop mode locks rotation');
+assert.equal(globalThis.__lock, false, 'laptop mode leaves auto-rotate alone');
 assert.equal(globalThis.__applied.length, 1, 'laptop mode rotates the panel');
 const [serial, method, config] = globalThis.__applied[0];
 assert.equal(serial, 7); assert.equal(method, 1, 'temporary, not persistent');
@@ -31,7 +35,7 @@ assert.deepEqual(config, [[0, 0, 1, 0, true, [['eDP-1', 'm2', {}]]]], 'normal la
 assert.equal(globalThis.__transform, 0);
 
 click(); flush();
-assert.equal(globalThis.__lock, false, 'tablet mode gives rotation back');
+assert.equal(globalThis.__lock, false, 'tablet mode leaves auto-rotate alone');
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
 assert.equal(controls.margin_bottom, 0, 'margin removed in tablet mode');
 assert.equal(Main.layoutManager.chrome.length, 0);
@@ -79,10 +83,9 @@ assert.notEqual(shown[0][2], shown[1][2], 'the label follows the mode');
 kbToggle(); flush();
 click(); flush();                                 // restore the mode we expect below
 click(); flush();
-// lock screen: dialog created while in laptop mode gets the inset, follows toggles
+// lock screen: a dialog created while in laptop mode gets the inset at once, follows toggles
 if (ext._wantedTabletMode) { click(); flush(); }   // make sure we are in laptop mode
 const dlg = Main.makeDialog();
-globalThis.__idle(); globalThis.__idle = null;
 const cons = dlg.box.constraints.at(-1);
 assert.equal(dlg.box.constraints.length, 2, 'inset constraint added after the monitor constraint');
 assert.equal(cons._getInset(), 1280, 'lock dialog shrinks to the top half in laptop mode');
@@ -91,34 +94,42 @@ assert.equal(cons._getInset(), 0, 'tablet mode removes the inset');
 click(); flush();
 assert.equal(cons._getInset(), 1280);
 // modal dialogs (shutdown, password prompts): inset only on the built-in monitor
-const modal = Main.makeModal(0); globalThis.__idle(); globalThis.__idle = null;
+const modal = Main.makeModal(0);
 const mc = modal._backgroundBin.constraints.at(-1);
 assert.equal(modal._backgroundBin.constraints.length, 2, 'modal dialog bin gets the constraint');
 assert.equal(mc._getInset(), 1280, 'modal dialog on the built-in monitor shrinks');
-modal._monitorConstraint.index = 1;
+modal._backgroundBin.constraints[0].index = 1;
 assert.equal(mc._getInset(), 0, 'modal dialog on another monitor is left alone');
-modal._monitorConstraint.index = -1;
+modal._backgroundBin.constraints[0].index = -1;
 assert.equal(mc._getInset(), 0, 'unset monitor index is ignored');
-modal._monitorConstraint.index = 0;
-// Alt-Tab switcher popup: shrunk to the visible half so it is centred there
-const sw = Main.makeSwitcher(); globalThis.__idle(); globalThis.__idle = null;
-assert.equal(sw._switcherList.translation_y, -640, 'switcher list moves up by half the covered height');
+modal._backgroundBin.constraints[0].index = 0;
+// Alt-Tab switcher popup: its list moves to the middle of the visible half
+const sw = Main.makeSwitcher();
+assert.equal(sw.translation_y, -640, 'switcher popup moves up by half the covered height');
 // screenshot UI: the toolbar's primary-monitor bin and the per-monitor bins shrink
-const ss = Main.makeScreenshotUI(); globalThis.__idle(); globalThis.__idle = null;
+const ss = Main.makeScreenshotUI();
 assert.equal(ss.primaryBin.constraints.length, 2, 'screenshot UI primary bin gets the constraint');
 assert.equal(ss.primaryBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI toolbar moves into the visible half');
 assert.equal(ss.monitorBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI monitor bin shrinks');
-// a constrained actor inside a constrained one is not shrunk twice; work-area constraints are left alone
-const nest = Main.makeNested(); globalThis.__idle(); globalThis.__idle = null;
-assert.equal(nest.outer.constraints.length, 2, 'outer actor gets the constraint');
-assert.equal(nest.outer.inner.constraints.length, 1, 'nested actor is not shrunk twice');
-assert.equal(nest.work.constraints.length, 1, 'work-area constraint is left alone');
+// nested constrained actors are all shrunk; work-area and overview ones are left alone
+const nest = Main.makeNested();
+assert.equal(nest.outer.constraints.at(-1)._getInset(), 1280);
+assert.equal(nest.outer.inner.constraints.at(-1)._getInset(), 1280, 'a nested actor gets the same inset');
+assert.equal(nest.work.constraints.at(-1)._getInset(), 0, 'work-area constraint is left alone');
+assert.equal(nest.inOverview.constraints.at(-1)._getInset(), 0, 'the overview is left alone');
 click(); flush();
-assert.equal(sw._switcherList.translation_y, 0, 'tablet mode puts the switcher list back');
+assert.equal(sw.translation_y, 0, 'tablet mode puts the switcher popup back');
+assert.equal(MonitorConstraint.prototype._init, originalInit, 'tablet mode removes the monitor constraint hook');
+assert.equal(SwitcherPopup.prototype.show, originalShow, 'tablet mode removes the switcher hook');
+assert.equal(dlg.box.constraints.length, 1, 'tablet mode removes the inset constraints');
+assert.equal(Main.makeDialog().box.constraints.length, 1, 'tablet mode leaves new dialogs alone');
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
-// volume/brightness popups: one per monitor, shrunk to the visible half
+sw.show();
+assert.equal(sw.translation_y, -640, 'the hooks are back in laptop mode');
+assert.equal(modal._backgroundBin.constraints.length, 2, 'existing dialogs get the inset again');
+// volume/brightness popups exist before the extension is enabled, a scan finds them
 const osd = Main.osdWindowManager._osdWindows[0];
 assert.equal(osd.constraints.length, 2, 'OSD window gets the constraint');
 const oc = osd.constraints.at(-1);
@@ -126,9 +137,6 @@ assert.equal(oc._getInset(), 1280, 'OSD moves into the visible half in laptop mo
 click(); flush();
 assert.equal(oc._getInset(), 0, 'tablet mode puts the OSD back');
 click(); flush();
-const dlg2 = Main.makeDialog(); globalThis.__idle(); globalThis.__idle = null;
-assert.equal(dlg2.box.constraints.length, 2);
-globalThis.__idle = null;
 // forced overview resync (unlock / before opening) re-lays the overview out
 const before = controls.relayouts;
 ext._syncOverview(true);
@@ -141,8 +149,11 @@ assert.equal(controls.margin_bottom, 1280, 'forced resync restores a reset margi
 
 globalThis.__lock = false;
 ext.disable(); flush();
-assert.equal(globalThis.__lock, false, 'rotation lock released on disable');
+assert.equal(globalThis.__lock, false, 'auto-rotate untouched on disable');
 assert.equal(dlg.box.constraints.length, 1, 'lock constraints removed on disable');
+assert.equal(MonitorConstraint.prototype._init, originalInit, 'monitor constraint hook removed on disable');
+assert.equal(SwitcherPopup.prototype.show, originalShow, 'switcher hook removed on disable');
+assert.equal(sw.translation_y, 0, 'switcher popup put back on disable');
 assert.equal(modal._backgroundBin.constraints.length, 1, 'modal constraints removed on disable');
 assert.equal(osd.constraints.length, 1, 'OSD constraint removed on disable');
 assert.equal(calls().at(-1), true, 'tablet mode restored on disable');
@@ -190,7 +201,7 @@ assert.equal(ext2._wantedTabletMode, true, 'click forces tablet while attached')
 ext2.disable(); flush();
 assert.equal(Object.keys(T).length, 0);
 
-// rotation: already normal -> no call; an existing user lock is kept; failures only warn
+// rotation: already normal -> no call; the auto-rotate setting is never written; failures only warn
 globalThis.__applied.length = 0; globalThis.__lock = true; globalThis.__warns.length = 0;
 const ext5 = new Ext({}); ext5.enable(); flush();          // starts in laptop mode (choice kept)
 if (ext5._wantedTabletMode) { click(); flush(); }
@@ -205,10 +216,4 @@ assert.ok(globalThis.__warns.some(w => w.includes('could not rotate')), 'rotatio
 globalThis.__rotateFail = false;
 ext6.disable(); flush();
 assert.equal(globalThis.__lock, false);
-globalThis.__noOrientationSchema = true; globalThis.__lock = false;
-const ext7 = new Ext({}); ext7.enable(); flush();
-if (ext7._wantedTabletMode) { click(); flush(); }
-assert.equal(globalThis.__lock, false, 'no schema: lock skipped');
-ext7.disable(); flush();
-globalThis.__noOrientationSchema = false;
 console.log('ALL TESTS PASSED');

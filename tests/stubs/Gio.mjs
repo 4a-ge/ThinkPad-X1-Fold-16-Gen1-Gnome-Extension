@@ -19,8 +19,8 @@ const session = {call(name, path, iface, method, params, rt, flags, timeout, can
     }
 }};
 class Settings { constructor(props) { this.props = props; }
-    get_boolean() { return globalThis.__lock; } set_boolean(k, v) { globalThis.__lock = v; } }
-const SettingsSchemaSource = {get_default: () => ({lookup: () => globalThis.__noOrientationSchema ? null : {}})};
+    get_boolean() { return globalThis.__lock; } set_boolean() { throw new Error('auto-rotate must not be written'); } }
+const SettingsSchemaSource = {get_default: () => ({lookup: () => ({})})};
 export default {
     Settings, SettingsSchemaSource,
     File: {new_for_path() { return {
