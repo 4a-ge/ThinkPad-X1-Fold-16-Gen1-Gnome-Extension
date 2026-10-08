@@ -675,6 +675,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         return [
             Main.screenShield?._lockDialogGroup,
             Main.layoutManager.modalDialogGroup,
+            // Alt-Tab and other switcher popups are added straight to uiGroup.
+            Main.uiGroup,
         ].filter(group => group);
     }
 
@@ -714,6 +716,13 @@ export default class BottomHalfBlockerExtension extends Extension {
                 dialog._backgroundBin,
                 () => this._getInsetForMonitor(dialog._monitorConstraint?.index)
             );
+        }
+
+        // Switcher popups (Alt-Tab): sized to the primary monitor by a
+        // monitor constraint, then centre their list inside it.
+        for (const popup of Main.uiGroup?.get_children() ?? []) {
+            if (popup._switcherList)
+                this._addInsetConstraint(popup, () => this._getPrimaryInset());
         }
 
         this._attachOsdInsets();

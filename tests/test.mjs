@@ -100,6 +100,10 @@ assert.equal(mc._getInset(), 0, 'modal dialog on another monitor is left alone')
 modal._monitorConstraint.index = -1;
 assert.equal(mc._getInset(), 0, 'unset monitor index is ignored');
 modal._monitorConstraint.index = 0;
+// Alt-Tab switcher popup: shrunk to the visible half so it is centred there
+const sw = Main.makeSwitcher(); globalThis.__idle(); globalThis.__idle = null;
+assert.equal(sw.constraints.length, 2, 'switcher popup gets the constraint');
+assert.equal(sw.constraints.at(-1)._getInset(), 1280, 'switcher popup shrinks to the visible half');
 click(); flush();
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();

@@ -22,7 +22,10 @@ globalThis.global = {backend: {get_monitor_manager: () => ({get_monitor_for_conn
 export const makeModal = index => { const d = {_backgroundBin: new Box(), _monitorConstraint: {index}, get_last_child() { return null; }};
     layoutManager.modalDialogGroup.dialogs.push(d); layoutManager.modalDialogGroup.onAdd(); return d; };
 
-export const uiGroup = {kids: [], add_child(c) { this.kids.push(c); }, remove_child(c) { this.kids = this.kids.filter(k => k !== c); }};
+export const uiGroup = {kids: [], connect(n, f) { this.onAdd = f; return 8; }, disconnect() {}, get_children() { return this.kids; },
+    add_child(c) { this.kids.push(c); }, remove_child(c) { this.kids = this.kids.filter(k => k !== c); }};
 
 export const osdWindowManager = {_osdWindows: [Object.assign(new Box(), {_monitorIndex: 0})], shown: [],
     showOne(...args) { this.shown.push(args); }};
+
+export const makeSwitcher = () => { const p = Object.assign(new Box(), {_switcherList: {}}); uiGroup.kids.push(p); uiGroup.onAdd(); return p; };
