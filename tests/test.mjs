@@ -104,6 +104,16 @@ modal._monitorConstraint.index = 0;
 const sw = Main.makeSwitcher(); globalThis.__idle(); globalThis.__idle = null;
 assert.equal(sw.constraints.length, 2, 'switcher popup gets the constraint');
 assert.equal(sw.constraints.at(-1)._getInset(), 1280, 'switcher popup shrinks to the visible half');
+// screenshot UI: the toolbar's primary-monitor bin and the per-monitor bins shrink
+const ss = Main.makeScreenshotUI(); globalThis.__idle(); globalThis.__idle = null;
+assert.equal(ss.primaryBin.constraints.length, 2, 'screenshot UI primary bin gets the constraint');
+assert.equal(ss.primaryBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI toolbar moves into the visible half');
+assert.equal(ss.monitorBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI monitor bin shrinks');
+// a constrained actor inside a constrained one is not shrunk twice; work-area constraints are left alone
+const nest = Main.makeNested(); globalThis.__idle(); globalThis.__idle = null;
+assert.equal(nest.outer.constraints.length, 2, 'outer actor gets the constraint');
+assert.equal(nest.outer.inner.constraints.length, 1, 'nested actor is not shrunk twice');
+assert.equal(nest.work.constraints.length, 1, 'work-area constraint is left alone');
 click(); flush();
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();

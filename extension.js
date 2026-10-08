@@ -12,6 +12,7 @@ import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
+import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -49,8 +50,11 @@ const DBUS_TIMEOUT_MILLISECONDS = 2000;
 // Fraction of the built-in monitor, from the bottom, that the keyboard covers.
 const COVERED_FRACTION = 0.5;
 
-// Shrinks an actor that is sized by a MonitorConstraint (the lock-screen
-// dialog, the shell's modal dialogs) so it only uses the visible part of the
+// How deep below Main.uiGroup to look for actors with a MonitorConstraint.
+const SCAN_DEPTH = 6;
+
+// Shrinks an actor that is sized by a MonitorConstraint (lock screen, modal
+// dialogs, Alt-Tab, OSD, screenshot UI) so it only uses the visible part of the
 // monitor. It has to be added after the MonitorConstraint, constraints are
 // applied in order. getInset() returns how many pixels to cut off the bottom.
 const BottomInsetConstraint = GObject.registerClass(
@@ -282,7 +286,7 @@ export default class BottomHalfBlockerExtension extends Extension {
     }
 
     // Shows the shell's own volume-style popup. It is moved into the visible
-    // half like the other popups, see _attachOsdInsets().
+    // half like the other popups, see _scanForMonitorActors().
     _showModeOsd() {
         const monitor = this._findBuiltinMonitor();
         if (!monitor || !this._icons)
@@ -657,27 +661,31 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    // The unlock dialog and the shell's modal dialogs (shutdown/restart,
-    // password prompts, ...) are created on demand and centre themselves on
-    // the whole monitor, so they are picked up as they are added.
+    // The lock screen, the shell's modal dialogs, the Alt-Tab switcher, the
+    // volume/brightness popups and the screenshot UI all size themselves with
+    // a MonitorConstraint and are created on demand, so every actor that
+    // gets added to one of the groups below is scanned for such a constraint.
     _watchDialogs() {
-        for (const group of this._getDialogGroups()) {
+        const groups = [
+            Main.uiGroup,
+            Main.layoutManager.modalDialogGroup,
+            Main.screenShield?._lockDialogGroup,
+        ].filter(group => group);
+
+        for (const group of groups) {
             this._signals.push([
                 group,
                 group.connect('child-added', () => this._scheduleInsetAttach()),
             ]);
         }
 
-        this._attachInsets();
-    }
+        // The OSD windows and the screenshot UI's monitor bins are rebuilt then.
+        this._signals.push([
+            Main.layoutManager,
+            Main.layoutManager.connect('monitors-changed', () => this._scheduleInsetAttach()),
+        ]);
 
-    _getDialogGroups() {
-        return [
-            Main.screenShield?._lockDialogGroup,
-            Main.layoutManager.modalDialogGroup,
-            // Alt-Tab and other switcher popups are added straight to uiGroup.
-            Main.uiGroup,
-        ].filter(group => group);
+        this._attachInsets();
     }
 
     _scheduleInsetAttach() {
@@ -692,50 +700,50 @@ export default class BottomHalfBlockerExtension extends Extension {
         });
     }
 
-    _addInsetConstraint(actor, getInset) {
-        if (!actor || this._insetConstraints.has(actor) || !actor.get_constraints?.().length)
-            return;
+    // How many pixels to cut off the bottom of an actor that a
+    // MonitorConstraint sizes to a monitor. The monitor is looked up on every
+    // layout, dialogs choose theirs after they are created.
+    _getConstraintInset(monitorConstraint) {
+        if (monitorConstraint.primary)
+            return this._getPrimaryInset();
 
-        const constraint = new BottomInsetConstraint(getInset);
-        actor.add_constraint(constraint);
-        actor.connect('destroy', () => this._insetConstraints.delete(actor));
-        this._insetConstraints.set(actor, constraint);
+        if (monitorConstraint.focus_monitor)
+            return this._getInsetForMonitor(Main.layoutManager.focusIndex);
+
+        return this._getInsetForMonitor(monitorConstraint.index);
     }
 
     _attachInsets() {
-        // Lock screen: the dialog's main box (clock, prompt, notifications) is
-        // its last child and is sized by a monitor constraint on the primary monitor.
-        const lockGroup = Main.screenShield?._lockDialogGroup;
-        for (const dialog of lockGroup?.get_children() ?? [])
-            this._addInsetConstraint(dialog.get_last_child?.(), () => this._getPrimaryInset());
-
-        // Modal dialogs: the bin around the dialog follows the monitor the
-        // dialog is opened on.
-        for (const dialog of Main.layoutManager.modalDialogGroup?.get_children() ?? []) {
-            this._addInsetConstraint(
-                dialog._backgroundBin,
-                () => this._getInsetForMonitor(dialog._monitorConstraint?.index)
-            );
-        }
-
-        // Switcher popups (Alt-Tab): sized to the primary monitor by a
-        // monitor constraint, then centre their list inside it.
-        for (const popup of Main.uiGroup?.get_children() ?? []) {
-            if (popup._switcherList)
-                this._addInsetConstraint(popup, () => this._getPrimaryInset());
-        }
-
-        this._attachOsdInsets();
+        this._scanForMonitorActors(Main.uiGroup, 0);
     }
 
-    _attachOsdInsets() {
-        // The volume/brightness popups sit at the bottom of each monitor,
-        // which is the covered half. There is one per monitor, created again
-        // when the monitors change.
-        for (const osd of Main.osdWindowManager?._osdWindows ?? []) {
-            if (osd)
-                this._addInsetConstraint(osd, () => this._getInsetForMonitor(osd._monitorIndex));
+    // Finds the actors sized by a MonitorConstraint and adds the inset after
+    // it. Nothing below such an actor is looked at, its children already live
+    // in the shrunk area. Constraints on the work area already respect the
+    // overlay's struts, and the overview is handled by _syncOverview().
+    _scanForMonitorActors(actor, depth) {
+        if (!actor || actor === this._overlay || actor === Main.layoutManager.overviewGroup)
+            return;
+
+        const monitorConstraint = actor.get_constraints?.()
+            .find(constraint => constraint instanceof Layout.MonitorConstraint);
+
+        if (monitorConstraint) {
+            if (!monitorConstraint.work_area && !this._insetConstraints.has(actor)) {
+                const constraint = new BottomInsetConstraint(
+                    () => this._getConstraintInset(monitorConstraint));
+                actor.add_constraint(constraint);
+                actor.connect('destroy', () => this._insetConstraints.delete(actor));
+                this._insetConstraints.set(actor, constraint);
+            }
+            return;
         }
+
+        if (depth >= SCAN_DEPTH)
+            return;
+
+        for (const child of actor.get_children?.() ?? [])
+            this._scanForMonitorActors(child, depth + 1);
     }
 
     _syncInsets() {
