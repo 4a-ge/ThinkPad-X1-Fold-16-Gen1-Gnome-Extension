@@ -31,7 +31,7 @@ export const uiGroup = {kids: [], connect(n, f) { this.onAdd = f; return 8; }, d
 export const osdWindowManager = {_osdWindows: [Object.assign(new Box({index: 0}), {_monitorIndex: 0})], shown: [],
     showOne(...args) { this.shown.push(args); }};
 
-export const makeSwitcher = () => { const p = new Box({primary: true}); uiGroup.kids.push(p); uiGroup.onAdd(); return p; };
+export const makeSwitcher = () => { const p = new Box({primary: true}); p.constraints = []; p._switcherList = {translation_y: 0}; uiGroup.kids.push(p); uiGroup.onAdd(); return p; };
 
 // the screenshot UI: a widget holding a primary-monitor bin and a bin per monitor
 export const makeScreenshotUI = () => { const ui = new Box({primary: true}); ui.constraints = [];

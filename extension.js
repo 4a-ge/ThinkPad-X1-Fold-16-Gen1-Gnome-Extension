@@ -97,6 +97,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overlay = null;
         this._overviewMargin = 0;
         this._insetConstraints = new Map();
+        this._switcherPopups = new Set();
         this._insetIdleId = 0;
         this._pollSourceId = 0;
         this._retrySourceId = 0;
@@ -185,6 +186,10 @@ export default class BottomHalfBlockerExtension extends Extension {
             }
         }
         this._insetConstraints?.clear();
+
+        for (const popup of this._switcherPopups ?? [])
+            this._moveSwitcherList(popup, 0);
+        this._switcherPopups?.clear();
 
         if (this._pollSourceId) {
             GLib.Source.remove(this._pollSourceId);
@@ -725,6 +730,19 @@ export default class BottomHalfBlockerExtension extends Extension {
         if (!actor || actor === this._overlay || actor === Main.layoutManager.overviewGroup)
             return;
 
+        // The Alt-Tab switcher has no monitor constraint, it centres its list
+        // on the primary monitor itself while allocating. The list is moved
+        // up instead, by half the covered height.
+        if (actor._switcherList !== undefined) {
+            if (!this._switcherPopups.has(actor)) {
+                this._switcherPopups.add(actor);
+                actor.connect('destroy', () => this._switcherPopups?.delete(actor));
+            }
+
+            this._moveSwitcherList(actor, this._getPrimaryInset() / 2);
+            return;
+        }
+
         const monitorConstraint = actor.get_constraints?.()
             .find(constraint => constraint instanceof Layout.MonitorConstraint);
 
@@ -746,7 +764,15 @@ export default class BottomHalfBlockerExtension extends Extension {
             this._scanForMonitorActors(child, depth + 1);
     }
 
+    _moveSwitcherList(popup, offset) {
+        if (popup._switcherList)
+            popup._switcherList.translation_y = offset > 0 ? -offset : 0;
+    }
+
     _syncInsets() {
+        for (const popup of this._switcherPopups)
+            this._moveSwitcherList(popup, this._getPrimaryInset() / 2);
+
         for (const constraint of this._insetConstraints.values())
             constraint.refresh();
     }

@@ -102,8 +102,7 @@ assert.equal(mc._getInset(), 0, 'unset monitor index is ignored');
 modal._monitorConstraint.index = 0;
 // Alt-Tab switcher popup: shrunk to the visible half so it is centred there
 const sw = Main.makeSwitcher(); globalThis.__idle(); globalThis.__idle = null;
-assert.equal(sw.constraints.length, 2, 'switcher popup gets the constraint');
-assert.equal(sw.constraints.at(-1)._getInset(), 1280, 'switcher popup shrinks to the visible half');
+assert.equal(sw._switcherList.translation_y, -640, 'switcher list moves up by half the covered height');
 // screenshot UI: the toolbar's primary-monitor bin and the per-monitor bins shrink
 const ss = Main.makeScreenshotUI(); globalThis.__idle(); globalThis.__idle = null;
 assert.equal(ss.primaryBin.constraints.length, 2, 'screenshot UI primary bin gets the constraint');
@@ -115,6 +114,7 @@ assert.equal(nest.outer.constraints.length, 2, 'outer actor gets the constraint'
 assert.equal(nest.outer.inner.constraints.length, 1, 'nested actor is not shrunk twice');
 assert.equal(nest.work.constraints.length, 1, 'work-area constraint is left alone');
 click(); flush();
+assert.equal(sw._switcherList.translation_y, 0, 'tablet mode puts the switcher list back');
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
