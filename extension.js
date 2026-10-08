@@ -97,6 +97,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overviewMargin = 0;
         this._insetConstraints = new Map();
         this._switcherPopups = new Set();
+        this._insetHooksInstalled = false;
         this._trackedConstraints = new Map();
         this._injectionManager = new InjectionManager();
         this._pollSourceId = 0;
@@ -145,8 +146,6 @@ export default class BottomHalfBlockerExtension extends Extension {
                 Main.overview.connect('showing', () => this._syncOverview(true)),
             ],
         ];
-
-        this._installInsetHooks();
 
         this._refreshBlockedState();
 
@@ -358,11 +357,15 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._button.accessible_name = tablet ? 'Tablet mode' : 'Laptop mode';
     }
 
+    // Tablet mode runs none of our code: the hooks are only installed while
+    // the overlay is up.
     _applyBlockedState() {
         if (this._blocked) {
+            this._installInsetHooks();
             this._ensureOverlay();
             this._syncOverlay();
         } else {
+            this._removeInsetHooks();
             this._destroyOverlay();
         }
 
@@ -608,6 +611,10 @@ export default class BottomHalfBlockerExtension extends Extension {
     // BottomInsetConstraint added after it on the same actor. Constraints that
     // exist already when the extension is enabled are found by a scan.
     _installInsetHooks() {
+        if (this._insetHooksInstalled)
+            return;
+
+        this._insetHooksInstalled = true;
         const extension = this;
 
         this._injectionManager.overrideMethod(
@@ -632,6 +639,7 @@ export default class BottomHalfBlockerExtension extends Extension {
     }
 
     _removeInsetHooks() {
+        this._insetHooksInstalled = false;
         this._injectionManager?.clear();
 
         for (const [monitorConstraint, signalId] of this._trackedConstraints ?? [])
@@ -715,6 +723,9 @@ export default class BottomHalfBlockerExtension extends Extension {
     // Picks up the MonitorConstraints that exist already (OSD windows, the
     // screenshot UI, a lock dialog from before the extension was enabled).
     _attachInsets() {
+        if (!this._insetHooksInstalled)
+            return;
+
         this._scanForMonitorConstraints(Main.uiGroup, 0);
     }
 

@@ -119,10 +119,16 @@ assert.equal(nest.work.constraints.at(-1)._getInset(), 0, 'work-area constraint 
 assert.equal(nest.inOverview.constraints.at(-1)._getInset(), 0, 'the overview is left alone');
 click(); flush();
 assert.equal(sw._switcherList.translation_y, 0, 'tablet mode puts the switcher list back');
+assert.equal(MonitorConstraint.prototype._init, originalInit, 'tablet mode removes the monitor constraint hook');
+assert.equal(SwitcherPopup.prototype.show, originalShow, 'tablet mode removes the switcher hook');
+assert.equal(dlg.box.constraints.length, 1, 'tablet mode removes the inset constraints');
+assert.equal(Main.makeDialog().box.constraints.length, 1, 'tablet mode leaves new dialogs alone');
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
-assert.equal(sw._switcherList.translation_y, -640);
+sw.show();
+assert.equal(sw._switcherList.translation_y, -640, 'the hooks are back in laptop mode');
+assert.equal(modal._backgroundBin.constraints.length, 2, 'existing dialogs get the inset again');
 // volume/brightness popups exist before the extension is enabled, a scan finds them
 const osd = Main.osdWindowManager._osdWindows[0];
 assert.equal(osd.constraints.length, 2, 'OSD window gets the constraint');
