@@ -30,6 +30,18 @@ const KEYBINDING_NAME = 'toggle-mode';
 // Connector names of the built-in panel; the first one that exists is used.
 const BUILTIN_CONNECTORS = ['eDP-1', 'eDP-2', 'eDP-3', 'LVDS-1', 'DSI-1'];
 
+// In laptop mode the keyboard covers the lower half, so there is exactly one
+// usable orientation. Rotation is locked (this stops auto-rotation, including
+// the Screen Rotate extension) and the built-in panel is turned to this
+// transform (0 = normal landscape).
+const ORIENTATION_LOCK_SCHEMA = 'org.gnome.settings-daemon.peripherals.touchscreen';
+const ORIENTATION_LOCK_KEY = 'orientation-lock';
+const LAPTOP_TRANSFORM = 0;
+
+const DISPLAY_CONFIG_NAME = 'org.gnome.Mutter.DisplayConfig';
+const DISPLAY_CONFIG_PATH = '/org/gnome/Mutter/DisplayConfig';
+const DISPLAY_CONFIG_METHOD_TEMPORARY = 1;
+
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
 const DBUS_TIMEOUT_MILLISECONDS = 2000;
@@ -88,6 +100,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._daemonRequestInFlight = false;
         this._daemonWarned = false;
         this._keybindingAdded = false;
+        this._rotationLockedByUs = false;
+        this._orientationSettings = this._loadOrientationSettings();
         this._cancellable = new Gio.Cancellable();
         this._keyboardAttachedFile = Gio.File.new_for_path(KEYBOARD_ATTACHED_PATH);
         this._hasKeyboardAttachedState = this._keyboardAttachedFile.query_exists(null);
@@ -187,6 +201,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._blocked = false;
         this._destroyOverlay();
         this._syncOverview();
+        this._unlockRotation();
+        this._orientationSettings = null;
 
         if (this._button) {
             this._button.destroy();
@@ -364,6 +380,123 @@ export default class BottomHalfBlockerExtension extends Extension {
 
         this._syncOverview();
         this._syncInsets();
+        this._syncRotation();
+    }
+
+    _loadOrientationSettings() {
+        const source = Gio.SettingsSchemaSource.get_default();
+        if (!source?.lookup(ORIENTATION_LOCK_SCHEMA, true)) {
+            console.debug(`${this.uuid}: schema ${ORIENTATION_LOCK_SCHEMA} not found, rotation is not locked`);
+            return null;
+        }
+
+        return new Gio.Settings({schema_id: ORIENTATION_LOCK_SCHEMA});
+    }
+
+    // Laptop mode: lock rotation and turn the panel to its one orientation.
+    // Tablet mode: give rotation back.
+    _syncRotation() {
+        if (this._blocked) {
+            this._lockRotation();
+            this._rotateBuiltinMonitor(LAPTOP_TRANSFORM);
+        } else {
+            this._unlockRotation();
+        }
+    }
+
+    // An already locked rotation is left alone and stays locked afterwards.
+    _lockRotation() {
+        if (!this._orientationSettings || this._rotationLockedByUs)
+            return;
+
+        try {
+            if (this._orientationSettings.get_boolean(ORIENTATION_LOCK_KEY))
+                return;
+
+            this._orientationSettings.set_boolean(ORIENTATION_LOCK_KEY, true);
+            this._rotationLockedByUs = true;
+        } catch (error) {
+            console.warn(`${this.uuid}: could not lock the rotation: ${error.message}`);
+        }
+    }
+
+    _unlockRotation() {
+        if (!this._rotationLockedByUs)
+            return;
+
+        this._rotationLockedByUs = false;
+
+        try {
+            this._orientationSettings?.set_boolean(ORIENTATION_LOCK_KEY, false);
+        } catch (error) {
+            console.warn(`${this.uuid}: could not unlock the rotation: ${error.message}`);
+        }
+    }
+
+    // Sets the transform of the built-in monitor through Mutter's display
+    // configuration, keeping everything else as it is. Not persistent.
+    _rotateBuiltinMonitor(transform) {
+        Gio.DBus.session.call(
+            DISPLAY_CONFIG_NAME, DISPLAY_CONFIG_PATH, DISPLAY_CONFIG_NAME,
+            'GetCurrentState', null, null,
+            Gio.DBusCallFlags.NONE, DBUS_TIMEOUT_MILLISECONDS, this._cancellable,
+            (connection, result) => {
+                try {
+                    const state = connection.call_finish(result).recursiveUnpack();
+                    this._applyTransform(state, transform);
+                } catch (error) {
+                    if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                        return;
+
+                    console.warn(`${this.uuid}: could not rotate the screen: ${error.message}`);
+                }
+            }
+        );
+    }
+
+    _applyTransform(state, transform) {
+        const [serial, monitors, logicalMonitors] = state;
+
+        const monitorManager = global.backend.get_monitor_manager();
+        const builtin = BUILTIN_CONNECTORS.find(connector => monitorManager.get_monitor_for_connector(connector) >= 0);
+        if (!builtin)
+            return;
+
+        const currentModeId = connector => {
+            const monitor = monitors.find(m => m[0][0] === connector);
+            return monitor?.[1].find(mode => mode[6]['is-current'])?.[0];
+        };
+
+        let changed = false;
+        const config = logicalMonitors.map(([x, y, scale, current, primary, members]) => {
+            const isBuiltin = members.some(member => member[0] === builtin);
+            if (isBuiltin && current !== transform)
+                changed = true;
+
+            return [
+                x, y, scale, isBuiltin ? transform : current, primary,
+                members.map(member => [member[0], currentModeId(member[0]), {}]),
+            ];
+        });
+
+        if (!changed)
+            return;
+
+        Gio.DBus.session.call(
+            DISPLAY_CONFIG_NAME, DISPLAY_CONFIG_PATH, DISPLAY_CONFIG_NAME,
+            'ApplyMonitorsConfig',
+            new GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})',
+                [serial, DISPLAY_CONFIG_METHOD_TEMPORARY, config, {}]),
+            null, Gio.DBusCallFlags.NONE, DBUS_TIMEOUT_MILLISECONDS, this._cancellable,
+            (connection, result) => {
+                try {
+                    connection.call_finish(result);
+                } catch (error) {
+                    if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                        console.warn(`${this.uuid}: could not rotate the screen: ${error.message}`);
+                }
+            }
+        );
     }
 
     _syncGeometry() {

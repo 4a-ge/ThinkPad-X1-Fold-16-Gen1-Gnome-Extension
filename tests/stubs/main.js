@@ -23,3 +23,6 @@ export const makeModal = index => { const d = {_backgroundBin: new Box(), _monit
     layoutManager.modalDialogGroup.dialogs.push(d); layoutManager.modalDialogGroup.onAdd(); return d; };
 
 export const uiGroup = {kids: [], add_child(c) { this.kids.push(c); }, remove_child(c) { this.kids = this.kids.filter(k => k !== c); }};
+
+export const osdWindowManager = {_osdWindows: [Object.assign(new Box(), {_monitorIndex: 0})], shown: [],
+    showOne(...args) { this.shown.push(args); }};

@@ -11,6 +11,8 @@ const controls = Main.overview._overview.controls;
 const ext = new Ext({});
 ext.enable(); flush();
 assert.deepEqual(calls(), [true], 'initial state sent once');
+assert.equal(globalThis.__lock, false, 'rotation untouched in tablet mode');
+assert.equal(globalThis.__applied.length, 0);
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
 assert.equal(ext._button.accessible_name, 'Tablet mode');
 assert.equal(T[1], undefined, 'no keyboard poll without the kernel node');
@@ -21,8 +23,15 @@ assert.equal(ext._icon.gicon, '/ext/icons/laptop-symbolic.svg');
 assert.equal(controls.margin_bottom, 1280, 'overview margin = half of built-in monitor');
 assert.deepEqual(ext._overlay.pos, [0, 1280]);
 assert.deepEqual(calls(), [true, false]);
+assert.equal(globalThis.__lock, true, 'laptop mode locks rotation');
+assert.equal(globalThis.__applied.length, 1, 'laptop mode rotates the panel');
+const [serial, method, config] = globalThis.__applied[0];
+assert.equal(serial, 7); assert.equal(method, 1, 'temporary, not persistent');
+assert.deepEqual(config, [[0, 0, 1, 0, true, [['eDP-1', 'm2', {}]]]], 'normal landscape, current mode kept');
+assert.equal(globalThis.__transform, 0);
 
 click(); flush();
+assert.equal(globalThis.__lock, false, 'tablet mode gives rotation back');
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
 assert.equal(controls.margin_bottom, 0, 'margin removed in tablet mode');
 assert.equal(Main.layoutManager.chrome.length, 0);
@@ -50,18 +59,23 @@ click();                                    // -> laptop again before reply
 flush(); flush();
 assert.equal(calls().at(-1), ext._wantedTabletMode, 'final sent state matches wanted state');
 
-// shortcut shows a popup in the top half of the built-in monitor; click does not
+// the shortcut shows the shell's OSD (label only, on the built-in monitor); clicking does not
 const kbToggle = Main.wm.kb[0].cb;
-globalThis.__timers['ms1500']?.();               // popup left over from the earlier shortcut use
+const shown = Main.osdWindowManager.shown;
+shown.length = 0;
 click(); flush();
-assert.equal(Main.uiGroup.kids.length, 0, 'clicking the panel entry shows no popup');
+assert.equal(shown.length, 0, 'clicking the panel entry shows no OSD');
 kbToggle(); flush();
-assert.equal(Main.uiGroup.kids.length, 1, 'shortcut shows a popup');
-assert.deepEqual(Main.uiGroup.kids[0].pos, [924, 307], 'popup is centred in the upper part of the screen');
+assert.equal(shown.length, 1, 'shortcut shows an OSD');
+const [monitorIndex, icon, label, level, maxLevel] = shown[0];
+assert.equal(monitorIndex, 0, 'OSD goes to the built-in monitor');
+assert.equal(label, ext._wantedTabletMode ? 'Tablet mode' : 'Laptop mode');
+assert.ok(icon.endsWith(ext._wantedTabletMode ? 'tablet-symbolic.svg' : 'laptop-symbolic.svg'));
+assert.equal(level, null, 'no level bar');
+assert.equal(maxLevel, null);
 kbToggle(); flush();
-assert.equal(Main.uiGroup.kids.length, 1, 'a new popup replaces the old one');
-globalThis.__timers['ms1500']();
-assert.equal(Main.uiGroup.kids.length, 0, 'popup goes away after its timeout');
+assert.equal(shown.length, 2);
+assert.notEqual(shown[0][2], shown[1][2], 'the label follows the mode');
 kbToggle(); flush();
 click(); flush();                                 // restore the mode we expect below
 click(); flush();
@@ -90,6 +104,14 @@ click(); flush();
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
+// volume/brightness popups: one per monitor, shrunk to the visible half
+const osd = Main.osdWindowManager._osdWindows[0];
+assert.equal(osd.constraints.length, 2, 'OSD window gets the constraint');
+const oc = osd.constraints.at(-1);
+assert.equal(oc._getInset(), 1280, 'OSD moves into the visible half in laptop mode');
+click(); flush();
+assert.equal(oc._getInset(), 0, 'tablet mode puts the OSD back');
+click(); flush();
 const dlg2 = Main.makeDialog(); globalThis.__idle(); globalThis.__idle = null;
 assert.equal(dlg2.box.constraints.length, 2);
 globalThis.__idle = null;
@@ -103,9 +125,12 @@ controls.margin_bottom = 0;
 ext._syncOverview(true);
 assert.equal(controls.margin_bottom, 1280, 'forced resync restores a reset margin');
 
+globalThis.__lock = false;
 ext.disable(); flush();
+assert.equal(globalThis.__lock, false, 'rotation lock released on disable');
 assert.equal(dlg.box.constraints.length, 1, 'lock constraints removed on disable');
 assert.equal(modal._backgroundBin.constraints.length, 1, 'modal constraints removed on disable');
+assert.equal(osd.constraints.length, 1, 'OSD constraint removed on disable');
 assert.equal(calls().at(-1), true, 'tablet mode restored on disable');
 assert.equal(controls.margin_bottom, 0);
 assert.equal(Main.wm.kb.length, 0, 'keybinding removed');
@@ -150,4 +175,26 @@ click(); flush();
 assert.equal(ext2._wantedTabletMode, true, 'click forces tablet while attached');
 ext2.disable(); flush();
 assert.equal(Object.keys(T).length, 0);
+
+// rotation: already normal -> no call; an existing user lock is kept; failures only warn
+globalThis.__applied.length = 0; globalThis.__lock = true; globalThis.__warns.length = 0;
+const ext5 = new Ext({}); ext5.enable(); flush();          // starts in laptop mode (choice kept)
+if (ext5._wantedTabletMode) { click(); flush(); }
+assert.equal(globalThis.__applied.length, 0, 'already normal: nothing applied');
+assert.equal(globalThis.__lock, true);
+ext5.disable(); flush();
+assert.equal(globalThis.__lock, true, 'a lock the user set stays');
+globalThis.__lock = false; globalThis.__transform = 3; globalThis.__rotateFail = true;
+const ext6 = new Ext({}); ext6.enable(); flush();
+if (ext6._wantedTabletMode) { click(); flush(); }
+assert.ok(globalThis.__warns.some(w => w.includes('could not rotate')), 'rotation failure is reported');
+globalThis.__rotateFail = false;
+ext6.disable(); flush();
+assert.equal(globalThis.__lock, false);
+globalThis.__noOrientationSchema = true; globalThis.__lock = false;
+const ext7 = new Ext({}); ext7.enable(); flush();
+if (ext7._wantedTabletMode) { click(); flush(); }
+assert.equal(globalThis.__lock, false, 'no schema: lock skipped');
+ext7.disable(); flush();
+globalThis.__noOrientationSchema = false;
 console.log('ALL TESTS PASSED');
