@@ -105,7 +105,7 @@ assert.equal(mc._getInset(), 0, 'unset monitor index is ignored');
 modal._backgroundBin.constraints[0].index = 0;
 // Alt-Tab switcher popup: its list moves to the middle of the visible half
 const sw = Main.makeSwitcher();
-assert.equal(sw._switcherList.translation_y, -640, 'switcher list moves up by half the covered height');
+assert.equal(sw.translation_y, -640, 'switcher popup moves up by half the covered height');
 // screenshot UI: the toolbar's primary-monitor bin and the per-monitor bins shrink
 const ss = Main.makeScreenshotUI();
 assert.equal(ss.primaryBin.constraints.length, 2, 'screenshot UI primary bin gets the constraint');
@@ -118,7 +118,7 @@ assert.equal(nest.outer.inner.constraints.at(-1)._getInset(), 1280, 'a nested ac
 assert.equal(nest.work.constraints.at(-1)._getInset(), 0, 'work-area constraint is left alone');
 assert.equal(nest.inOverview.constraints.at(-1)._getInset(), 0, 'the overview is left alone');
 click(); flush();
-assert.equal(sw._switcherList.translation_y, 0, 'tablet mode puts the switcher list back');
+assert.equal(sw.translation_y, 0, 'tablet mode puts the switcher popup back');
 assert.equal(MonitorConstraint.prototype._init, originalInit, 'tablet mode removes the monitor constraint hook');
 assert.equal(SwitcherPopup.prototype.show, originalShow, 'tablet mode removes the switcher hook');
 assert.equal(dlg.box.constraints.length, 1, 'tablet mode removes the inset constraints');
@@ -127,7 +127,7 @@ assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
 sw.show();
-assert.equal(sw._switcherList.translation_y, -640, 'the hooks are back in laptop mode');
+assert.equal(sw.translation_y, -640, 'the hooks are back in laptop mode');
 assert.equal(modal._backgroundBin.constraints.length, 2, 'existing dialogs get the inset again');
 // volume/brightness popups exist before the extension is enabled, a scan finds them
 const osd = Main.osdWindowManager._osdWindows[0];
@@ -153,7 +153,7 @@ assert.equal(globalThis.__lock, false, 'auto-rotate untouched on disable');
 assert.equal(dlg.box.constraints.length, 1, 'lock constraints removed on disable');
 assert.equal(MonitorConstraint.prototype._init, originalInit, 'monitor constraint hook removed on disable');
 assert.equal(SwitcherPopup.prototype.show, originalShow, 'switcher hook removed on disable');
-assert.equal(sw._switcherList.translation_y, 0, 'switcher list put back on disable');
+assert.equal(sw.translation_y, 0, 'switcher popup put back on disable');
 assert.equal(modal._backgroundBin.constraints.length, 1, 'modal constraints removed on disable');
 assert.equal(osd.constraints.length, 1, 'OSD constraint removed on disable');
 assert.equal(calls().at(-1), true, 'tablet mode restored on disable');

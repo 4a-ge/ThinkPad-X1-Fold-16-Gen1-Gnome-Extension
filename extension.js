@@ -624,9 +624,10 @@ export default class BottomHalfBlockerExtension extends Extension {
                 extension._trackMonitorConstraint(this);
             });
 
-        // The Alt-Tab switcher has no monitor constraint, it centres its list
-        // on the primary monitor itself while allocating. The list is moved
-        // up instead, by half the covered height.
+        // The switcher popups (Alt-Tab, Super+`) have no monitor constraint,
+        // they centre their list, and the window thumbnails below it, on the
+        // primary monitor themselves while allocating. The whole popup is
+        // moved up instead, by half the covered height.
         this._injectionManager.overrideMethod(
             SwitcherPopup.SwitcherPopup.prototype, 'show',
             original => function (...args) {
@@ -657,7 +658,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._insetConstraints?.clear();
 
         for (const popup of this._switcherPopups ?? [])
-            this._moveSwitcherList(popup, 0);
+            this._moveSwitcherPopup(popup, 0);
         this._switcherPopups?.clear();
     }
 
@@ -751,17 +752,16 @@ export default class BottomHalfBlockerExtension extends Extension {
             popup.connect('destroy', () => this._switcherPopups?.delete(popup));
         }
 
-        this._moveSwitcherList(popup, this._getPrimaryInset() / 2);
+        this._moveSwitcherPopup(popup, this._getPrimaryInset() / 2);
     }
 
-    _moveSwitcherList(popup, offset) {
-        if (popup._switcherList)
-            popup._switcherList.translation_y = offset > 0 ? -offset : 0;
+    _moveSwitcherPopup(popup, offset) {
+        popup.translation_y = offset > 0 ? -offset : 0;
     }
 
     _syncInsets() {
         for (const popup of this._switcherPopups)
-            this._moveSwitcherList(popup, this._getPrimaryInset() / 2);
+            this._moveSwitcherPopup(popup, this._getPrimaryInset() / 2);
 
         for (const constraint of this._insetConstraints.values())
             constraint.refresh();
