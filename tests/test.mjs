@@ -100,7 +100,21 @@ assert.equal(mc._getInset(), 0, 'modal dialog on another monitor is left alone')
 modal._monitorConstraint.index = -1;
 assert.equal(mc._getInset(), 0, 'unset monitor index is ignored');
 modal._monitorConstraint.index = 0;
+// Alt-Tab switcher popup: shrunk to the visible half so it is centred there
+const sw = Main.makeSwitcher(); globalThis.__idle(); globalThis.__idle = null;
+assert.equal(sw._switcherList.translation_y, -640, 'switcher list moves up by half the covered height');
+// screenshot UI: the toolbar's primary-monitor bin and the per-monitor bins shrink
+const ss = Main.makeScreenshotUI(); globalThis.__idle(); globalThis.__idle = null;
+assert.equal(ss.primaryBin.constraints.length, 2, 'screenshot UI primary bin gets the constraint');
+assert.equal(ss.primaryBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI toolbar moves into the visible half');
+assert.equal(ss.monitorBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI monitor bin shrinks');
+// a constrained actor inside a constrained one is not shrunk twice; work-area constraints are left alone
+const nest = Main.makeNested(); globalThis.__idle(); globalThis.__idle = null;
+assert.equal(nest.outer.constraints.length, 2, 'outer actor gets the constraint');
+assert.equal(nest.outer.inner.constraints.length, 1, 'nested actor is not shrunk twice');
+assert.equal(nest.work.constraints.length, 1, 'work-area constraint is left alone');
 click(); flush();
+assert.equal(sw._switcherList.translation_y, 0, 'tablet mode puts the switcher list back');
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
