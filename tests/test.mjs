@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import Ext from '../extension.js';
 import * as Main from './stubs/main.js';
+import {MonitorConstraint} from './stubs/layout.js';
+import {SwitcherPopup} from './stubs/switcherPopup.js';
+const originalInit = MonitorConstraint.prototype._init;
+const originalShow = SwitcherPopup.prototype.show;
 const flush = () => { while (globalThis.__pending.length) globalThis.__pending.shift()(); };
 const calls = () => globalThis.__log.map(c => c.value);
 const click = () => globalThis.__gestures.at(-1).handlers.recognize();
@@ -79,10 +83,9 @@ assert.notEqual(shown[0][2], shown[1][2], 'the label follows the mode');
 kbToggle(); flush();
 click(); flush();                                 // restore the mode we expect below
 click(); flush();
-// lock screen: dialog created while in laptop mode gets the inset, follows toggles
+// lock screen: a dialog created while in laptop mode gets the inset at once, follows toggles
 if (ext._wantedTabletMode) { click(); flush(); }   // make sure we are in laptop mode
 const dlg = Main.makeDialog();
-globalThis.__idle(); globalThis.__idle = null;
 const cons = dlg.box.constraints.at(-1);
 assert.equal(dlg.box.constraints.length, 2, 'inset constraint added after the monitor constraint');
 assert.equal(cons._getInset(), 1280, 'lock dialog shrinks to the top half in laptop mode');
@@ -91,34 +94,36 @@ assert.equal(cons._getInset(), 0, 'tablet mode removes the inset');
 click(); flush();
 assert.equal(cons._getInset(), 1280);
 // modal dialogs (shutdown, password prompts): inset only on the built-in monitor
-const modal = Main.makeModal(0); globalThis.__idle(); globalThis.__idle = null;
+const modal = Main.makeModal(0);
 const mc = modal._backgroundBin.constraints.at(-1);
 assert.equal(modal._backgroundBin.constraints.length, 2, 'modal dialog bin gets the constraint');
 assert.equal(mc._getInset(), 1280, 'modal dialog on the built-in monitor shrinks');
-modal._monitorConstraint.index = 1;
+modal._backgroundBin.constraints[0].index = 1;
 assert.equal(mc._getInset(), 0, 'modal dialog on another monitor is left alone');
-modal._monitorConstraint.index = -1;
+modal._backgroundBin.constraints[0].index = -1;
 assert.equal(mc._getInset(), 0, 'unset monitor index is ignored');
-modal._monitorConstraint.index = 0;
-// Alt-Tab switcher popup: shrunk to the visible half so it is centred there
-const sw = Main.makeSwitcher(); globalThis.__idle(); globalThis.__idle = null;
+modal._backgroundBin.constraints[0].index = 0;
+// Alt-Tab switcher popup: its list moves to the middle of the visible half
+const sw = Main.makeSwitcher();
 assert.equal(sw._switcherList.translation_y, -640, 'switcher list moves up by half the covered height');
 // screenshot UI: the toolbar's primary-monitor bin and the per-monitor bins shrink
-const ss = Main.makeScreenshotUI(); globalThis.__idle(); globalThis.__idle = null;
+const ss = Main.makeScreenshotUI();
 assert.equal(ss.primaryBin.constraints.length, 2, 'screenshot UI primary bin gets the constraint');
 assert.equal(ss.primaryBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI toolbar moves into the visible half');
 assert.equal(ss.monitorBin.constraints.at(-1)._getInset(), 1280, 'screenshot UI monitor bin shrinks');
-// a constrained actor inside a constrained one is not shrunk twice; work-area constraints are left alone
-const nest = Main.makeNested(); globalThis.__idle(); globalThis.__idle = null;
-assert.equal(nest.outer.constraints.length, 2, 'outer actor gets the constraint');
-assert.equal(nest.outer.inner.constraints.length, 1, 'nested actor is not shrunk twice');
-assert.equal(nest.work.constraints.length, 1, 'work-area constraint is left alone');
+// nested constrained actors are all shrunk; work-area and overview ones are left alone
+const nest = Main.makeNested();
+assert.equal(nest.outer.constraints.at(-1)._getInset(), 1280);
+assert.equal(nest.outer.inner.constraints.at(-1)._getInset(), 1280, 'a nested actor gets the same inset');
+assert.equal(nest.work.constraints.at(-1)._getInset(), 0, 'work-area constraint is left alone');
+assert.equal(nest.inOverview.constraints.at(-1)._getInset(), 0, 'the overview is left alone');
 click(); flush();
 assert.equal(sw._switcherList.translation_y, 0, 'tablet mode puts the switcher list back');
 assert.equal(mc._getInset(), 0, 'tablet mode removes the modal inset');
 click(); flush();
 assert.equal(mc._getInset(), 1280);
-// volume/brightness popups: one per monitor, shrunk to the visible half
+assert.equal(sw._switcherList.translation_y, -640);
+// volume/brightness popups exist before the extension is enabled, a scan finds them
 const osd = Main.osdWindowManager._osdWindows[0];
 assert.equal(osd.constraints.length, 2, 'OSD window gets the constraint');
 const oc = osd.constraints.at(-1);
@@ -126,9 +131,6 @@ assert.equal(oc._getInset(), 1280, 'OSD moves into the visible half in laptop mo
 click(); flush();
 assert.equal(oc._getInset(), 0, 'tablet mode puts the OSD back');
 click(); flush();
-const dlg2 = Main.makeDialog(); globalThis.__idle(); globalThis.__idle = null;
-assert.equal(dlg2.box.constraints.length, 2);
-globalThis.__idle = null;
 // forced overview resync (unlock / before opening) re-lays the overview out
 const before = controls.relayouts;
 ext._syncOverview(true);
@@ -143,6 +145,9 @@ globalThis.__lock = false;
 ext.disable(); flush();
 assert.equal(globalThis.__lock, false, 'rotation lock released on disable');
 assert.equal(dlg.box.constraints.length, 1, 'lock constraints removed on disable');
+assert.equal(MonitorConstraint.prototype._init, originalInit, 'monitor constraint hook removed on disable');
+assert.equal(SwitcherPopup.prototype.show, originalShow, 'switcher hook removed on disable');
+assert.equal(sw._switcherList.translation_y, 0, 'switcher list put back on disable');
 assert.equal(modal._backgroundBin.constraints.length, 1, 'modal constraints removed on disable');
 assert.equal(osd.constraints.length, 1, 'OSD constraint removed on disable');
 assert.equal(calls().at(-1), true, 'tablet mode restored on disable');

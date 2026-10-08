@@ -15,7 +15,8 @@ import St from 'gi://St';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as SwitcherPopup from 'resource:///org/gnome/shell/ui/switcherPopup.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const KEYBOARD_ATTACHED_PATH = '/sys/devices/platform/thinkpad_acpi/keyboard_attached_on_screen';
 
@@ -50,7 +51,7 @@ const DBUS_TIMEOUT_MILLISECONDS = 2000;
 // Fraction of the built-in monitor, from the bottom, that the keyboard covers.
 const COVERED_FRACTION = 0.5;
 
-// How deep below Main.uiGroup to look for actors with a MonitorConstraint.
+// How deep below Main.uiGroup to look for existing MonitorConstraints.
 const SCAN_DEPTH = 6;
 
 // Shrinks an actor that is sized by a MonitorConstraint (lock screen, modal
@@ -98,7 +99,8 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._overviewMargin = 0;
         this._insetConstraints = new Map();
         this._switcherPopups = new Set();
-        this._insetIdleId = 0;
+        this._trackedConstraints = new Map();
+        this._injectionManager = new InjectionManager();
         this._pollSourceId = 0;
         this._retrySourceId = 0;
         this._lastSentTabletMode = null;
@@ -148,7 +150,7 @@ export default class BottomHalfBlockerExtension extends Extension {
             ],
         ];
 
-        this._watchDialogs();
+        this._installInsetHooks();
 
         this._refreshBlockedState();
 
@@ -172,24 +174,7 @@ export default class BottomHalfBlockerExtension extends Extension {
 
         this._signals = null;
 
-        if (this._insetIdleId) {
-            GLib.Source.remove(this._insetIdleId);
-            this._insetIdleId = 0;
-        }
-
-        for (const [box, constraint] of this._insetConstraints ?? []) {
-            try {
-                box.remove_constraint(constraint);
-                box.queue_relayout();
-            } catch (error) {
-                console.debug(`${this.uuid}: could not remove an inset constraint: ${error}`);
-            }
-        }
-        this._insetConstraints?.clear();
-
-        for (const popup of this._switcherPopups ?? [])
-            this._moveSwitcherList(popup, 0);
-        this._switcherPopups?.clear();
+        this._removeInsetHooks();
 
         if (this._pollSourceId) {
             GLib.Source.remove(this._pollSourceId);
@@ -666,43 +651,101 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    // The lock screen, the shell's modal dialogs, the Alt-Tab switcher, the
-    // volume/brightness popups and the screenshot UI all size themselves with
-    // a MonitorConstraint and are created on demand, so every actor that
-    // gets added to one of the groups below is scanned for such a constraint.
-    _watchDialogs() {
-        const groups = [
-            Main.uiGroup,
-            Main.layoutManager.modalDialogGroup,
-            Main.screenShield?._lockDialogGroup,
-        ].filter(group => group);
+    // Everything the shell sizes with a MonitorConstraint (lock screen, modal
+    // dialogs, OSD popups, screenshot UI, ...) is shrunk to the visible half by
+    // one hook: every MonitorConstraint that gets created or attached gets a
+    // BottomInsetConstraint added after it on the same actor. Constraints that
+    // exist already when the extension is enabled are found by a scan.
+    _installInsetHooks() {
+        const extension = this;
 
-        for (const group of groups) {
-            this._signals.push([
-                group,
-                group.connect('child-added', () => this._scheduleInsetAttach()),
-            ]);
-        }
+        this._injectionManager.overrideMethod(
+            Layout.MonitorConstraint.prototype, '_init',
+            original => function (...args) {
+                original.apply(this, args);
+                extension._trackMonitorConstraint(this);
+            });
 
-        // The OSD windows and the screenshot UI's monitor bins are rebuilt then.
-        this._signals.push([
-            Main.layoutManager,
-            Main.layoutManager.connect('monitors-changed', () => this._scheduleInsetAttach()),
-        ]);
+        // The Alt-Tab switcher has no monitor constraint, it centres its list
+        // on the primary monitor itself while allocating. The list is moved
+        // up instead, by half the covered height.
+        this._injectionManager.overrideMethod(
+            SwitcherPopup.SwitcherPopup.prototype, 'show',
+            original => function (...args) {
+                const result = original.apply(this, args);
+                extension._trackSwitcherPopup(this);
+                return result;
+            });
 
         this._attachInsets();
     }
 
-    _scheduleInsetAttach() {
-        if (this._insetIdleId)
+    _removeInsetHooks() {
+        this._injectionManager?.clear();
+
+        for (const [monitorConstraint, signalId] of this._trackedConstraints ?? [])
+            monitorConstraint.disconnect(signalId);
+        this._trackedConstraints?.clear();
+
+        for (const [actor, constraint] of this._insetConstraints ?? []) {
+            try {
+                actor.remove_constraint(constraint);
+                actor.queue_relayout();
+            } catch (error) {
+                console.debug(`${this.uuid}: could not remove an inset constraint: ${error}`);
+            }
+        }
+        this._insetConstraints?.clear();
+
+        for (const popup of this._switcherPopups ?? [])
+            this._moveSwitcherList(popup, 0);
+        this._switcherPopups?.clear();
+    }
+
+    // Adds the inset to the actor of a MonitorConstraint, now or, when the
+    // constraint is not attached yet, as soon as it is.
+    _trackMonitorConstraint(monitorConstraint) {
+        if (this._trackedConstraints.has(monitorConstraint))
             return;
 
-        // The dialogs build their contents right after being added.
-        this._insetIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            this._insetIdleId = 0;
-            this._attachInsets();
-            return GLib.SOURCE_REMOVE;
+        if (monitorConstraint.get_actor()) {
+            this._addInset(monitorConstraint);
+            return;
+        }
+
+        const signalId = monitorConstraint.connect('notify::actor', () => {
+            if (monitorConstraint.get_actor())
+                this._addInset(monitorConstraint);
         });
+        this._trackedConstraints.set(monitorConstraint, signalId);
+    }
+
+    _addInset(monitorConstraint) {
+        const actor = monitorConstraint.get_actor();
+        if (this._insetConstraints.has(actor))
+            return;
+
+        const constraint = new BottomInsetConstraint(
+            () => this._isExcluded(actor, monitorConstraint)
+                ? 0
+                : this._getConstraintInset(monitorConstraint));
+        actor.add_constraint(constraint);
+        actor.connect('destroy', () => this._insetConstraints?.delete(actor));
+        this._insetConstraints.set(actor, constraint);
+    }
+
+    // Constraints on the work area already respect the overlay's struts, the
+    // overview is handled by _syncOverview() and the overlay is the cover.
+    _isExcluded(actor, monitorConstraint) {
+        if (monitorConstraint.work_area)
+            return true;
+
+        for (let parent = actor; parent; parent = parent.get_parent?.()) {
+            if (parent === this._overlay || parent === Main.layoutManager.overviewGroup)
+                return true;
+        }
+
+        return false;
     }
 
     // How many pixels to cut off the bottom of an actor that a
@@ -718,50 +761,35 @@ export default class BottomHalfBlockerExtension extends Extension {
         return this._getInsetForMonitor(monitorConstraint.index);
     }
 
+    // Picks up the MonitorConstraints that exist already (OSD windows, the
+    // screenshot UI, a lock dialog from before the extension was enabled).
     _attachInsets() {
-        this._scanForMonitorActors(Main.uiGroup, 0);
+        this._scanForMonitorConstraints(Main.uiGroup, 0);
     }
 
-    // Finds the actors sized by a MonitorConstraint and adds the inset after
-    // it. Nothing below such an actor is looked at, its children already live
-    // in the shrunk area. Constraints on the work area already respect the
-    // overlay's struts, and the overview is handled by _syncOverview().
-    _scanForMonitorActors(actor, depth) {
-        if (!actor || actor === this._overlay || actor === Main.layoutManager.overviewGroup)
+    _scanForMonitorConstraints(actor, depth) {
+        if (!actor)
             return;
 
-        // The Alt-Tab switcher has no monitor constraint, it centres its list
-        // on the primary monitor itself while allocating. The list is moved
-        // up instead, by half the covered height.
-        if (actor._switcherList !== undefined) {
-            if (!this._switcherPopups.has(actor)) {
-                this._switcherPopups.add(actor);
-                actor.connect('destroy', () => this._switcherPopups?.delete(actor));
-            }
-
-            this._moveSwitcherList(actor, this._getPrimaryInset() / 2);
-            return;
-        }
-
-        const monitorConstraint = actor.get_constraints?.()
-            .find(constraint => constraint instanceof Layout.MonitorConstraint);
-
-        if (monitorConstraint) {
-            if (!monitorConstraint.work_area && !this._insetConstraints.has(actor)) {
-                const constraint = new BottomInsetConstraint(
-                    () => this._getConstraintInset(monitorConstraint));
-                actor.add_constraint(constraint);
-                actor.connect('destroy', () => this._insetConstraints.delete(actor));
-                this._insetConstraints.set(actor, constraint);
-            }
-            return;
+        for (const constraint of actor.get_constraints?.() ?? []) {
+            if (constraint instanceof Layout.MonitorConstraint)
+                this._trackMonitorConstraint(constraint);
         }
 
         if (depth >= SCAN_DEPTH)
             return;
 
         for (const child of actor.get_children?.() ?? [])
-            this._scanForMonitorActors(child, depth + 1);
+            this._scanForMonitorConstraints(child, depth + 1);
+    }
+
+    _trackSwitcherPopup(popup) {
+        if (!this._switcherPopups.has(popup)) {
+            this._switcherPopups.add(popup);
+            popup.connect('destroy', () => this._switcherPopups?.delete(popup));
+        }
+
+        this._moveSwitcherList(popup, this._getPrimaryInset() / 2);
     }
 
     _moveSwitcherList(popup, offset) {
