@@ -43,6 +43,11 @@ const DISPLAY_CONFIG_NAME = 'org.gnome.Mutter.DisplayConfig';
 const DISPLAY_CONFIG_PATH = '/org/gnome/Mutter/DisplayConfig';
 const DISPLAY_CONFIG_METHOD_TEMPORARY = 1;
 
+// logind announces suspend/resume with PrepareForSleep(b).
+const LOGIND_NAME = 'org.freedesktop.login1';
+const LOGIND_PATH = '/org/freedesktop/login1';
+const LOGIND_IFACE = 'org.freedesktop.login1.Manager';
+
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
 const DBUS_TIMEOUT_MILLISECONDS = 2000;
@@ -107,6 +112,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._keybindingAdded = false;
         this._rotationLockedByUs = false;
         this._orientationSettings = this._loadOrientationSettings();
+        this._sleepSubscriptionId = 0;
         this._cancellable = new Gio.Cancellable();
         this._keyboardAttachedFile = Gio.File.new_for_path(KEYBOARD_ATTACHED_PATH);
         this._hasKeyboardAttachedState = this._keyboardAttachedFile.query_exists(null);
@@ -130,7 +136,12 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._signals = [
             [
                 Main.layoutManager,
-                Main.layoutManager.connect('monitors-changed', () => this._syncGeometry()),
+                Main.layoutManager.connect('monitors-changed', () => {
+                    this._syncGeometry();
+                    // The panel may come back rotated (e.g. after resume).
+                    if (this._blocked)
+                        this._rotateBuiltinMonitor(LAPTOP_TRANSFORM);
+                }),
             ],
             // The overview and the lock screen lay themselves out as if the
             // whole monitor were free, so they are re-adjusted whenever the
@@ -149,6 +160,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         ];
 
         this._watchDialogs();
+        this._watchResume();
 
         this._refreshBlockedState();
 
@@ -171,6 +183,11 @@ export default class BottomHalfBlockerExtension extends Extension {
             source.disconnect(signalId);
 
         this._signals = null;
+
+        if (this._sleepSubscriptionId) {
+            Gio.DBus.system.signal_unsubscribe(this._sleepSubscriptionId);
+            this._sleepSubscriptionId = 0;
+        }
 
         if (this._insetIdleId) {
             GLib.Source.remove(this._insetIdleId);
@@ -227,6 +244,31 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._icons = null;
         this._toggleGesture = null;
         this._keyboardAttachedFile = null;
+    }
+
+    // After resume the daemon's tablet-mode switch and the panel's rotation
+    // can be back to their defaults, so both are sent again.
+    _watchResume() {
+        try {
+            this._sleepSubscriptionId = Gio.DBus.system.signal_subscribe(
+                LOGIND_NAME, LOGIND_IFACE, 'PrepareForSleep', LOGIND_PATH, null,
+                Gio.DBusSignalFlags.NONE,
+                (connection, sender, path, iface, signal, parameters) => {
+                    const [sleeping] = parameters.deepUnpack();
+                    if (!sleeping)
+                        this._onResume();
+                });
+        } catch (error) {
+            console.warn(`${this.uuid}: could not watch for resume: ${error.message}`);
+        }
+    }
+
+    _onResume() {
+        this._lastSentTabletMode = null;
+        this._syncDaemon();
+
+        if (this._blocked)
+            this._rotateBuiltinMonitor(LAPTOP_TRANSFORM);
     }
 
     _addToggleHandler() {
