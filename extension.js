@@ -508,9 +508,17 @@ export default class BottomHalfBlockerExtension extends Extension {
     _applyTransform(state, transform) {
         const [serial, monitors, logicalMonitors] = state;
 
-        const monitorManager = global.backend.get_monitor_manager();
-        const builtin = BUILTIN_CONNECTORS.find(connector => monitorManager.get_monitor_for_connector(connector) >= 0);
+        // Mutter flags the laptop panel itself; the connector names are only
+        // a fallback. With no built-in panel (e.g. lid closed) nothing is
+        // touched, an external monitor is never rotated.
+        const builtin = monitors.find(monitor => monitor[2]?.['is-builtin'])?.[0][0] ??
+            BUILTIN_CONNECTORS.find(connector => monitors.some(m => m[0][0] === connector));
         if (!builtin)
+            return;
+
+        // A mirrored external monitor shares the panel's logical monitor and
+        // would be turned with it.
+        if (logicalMonitors.some(lm => lm[5].some(member => member[0] === builtin) && lm[5].length > 1))
             return;
 
         const currentModeId = connector => {
@@ -592,9 +600,10 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    // The built-in panel, not necessarily the primary monitor.
+    // The built-in panel, not necessarily the primary monitor. Null when it is
+    // not active (lid closed, docked): the modes then leave every monitor alone.
     _findBuiltinMonitor() {
-        const {monitors, primaryMonitor} = Main.layoutManager;
+        const {monitors} = Main.layoutManager;
 
         try {
             const monitorManager = global.backend.get_monitor_manager();
@@ -608,7 +617,7 @@ export default class BottomHalfBlockerExtension extends Extension {
             console.debug(`${this.uuid}: could not look up the built-in monitor: ${error}`);
         }
 
-        return primaryMonitor;
+        return null;
     }
 
     // The bottom half of the built-in monitor, i.e. the part the keyboard covers.

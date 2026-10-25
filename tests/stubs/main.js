@@ -19,7 +19,7 @@ const dialog = {get_last_child() { return dialog.box; }, box: null};
 export const screenShield = {_lockDialogGroup: {dialogs: [], connect(n, f) { this.onAdd = f; return 5; }, disconnect() {},
     get_children() { return this.dialogs; }}};
 export const makeDialog = () => { const d = {box: new Box(), get_last_child() { return this.box; }, get_children() { return [this.box, ...(this.box.children)]; }}; screenShield._lockDialogGroup.dialogs.push(d); screenShield._lockDialogGroup.onAdd(); return d; };
-globalThis.global = {backend: {get_monitor_manager: () => ({get_monitor_for_connector: c => c === 'eDP-1' ? 0 : -1})}};
+globalThis.global = {backend: {get_monitor_manager: () => ({get_monitor_for_connector: c => !globalThis.__noBuiltin && c === 'eDP-1' ? 0 : -1})}};
 
 export const makeModal = index => { const bin = new Box({index});
     const d = {_backgroundBin: bin, _monitorConstraint: bin.constraints[0], get_children() { return [bin]; }};
