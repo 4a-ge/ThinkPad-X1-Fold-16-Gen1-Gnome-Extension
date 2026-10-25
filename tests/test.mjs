@@ -211,4 +211,18 @@ if (ext7._wantedTabletMode) { click(); flush(); }
 assert.equal(globalThis.__lock, false, 'no schema: lock skipped');
 ext7.disable(); flush();
 globalThis.__noOrientationSchema = false;
+// resume: the daemon state is re-sent and a rotated panel is turned back
+globalThis.__lock = false; globalThis.__transform = 0; globalThis.__log.length = 0; globalThis.__applied.length = 0;
+const ext8 = new Ext({}); ext8.enable(); flush();
+if (ext8._wantedTabletMode) { click(); flush(); }
+assert.ok(globalThis.__sleepCb, 'resume is watched');
+const sentBefore = globalThis.__log.length;
+globalThis.__transform = 1;                                  // the panel came back rotated
+globalThis.__sleepCb(null, null, null, null, 'PrepareForSleep', {deepUnpack: () => [true]}); flush();
+assert.equal(globalThis.__log.length, sentBefore, 'nothing happens on the way to sleep');
+globalThis.__sleepCb(null, null, null, null, 'PrepareForSleep', {deepUnpack: () => [false]}); flush();
+assert.equal(globalThis.__log.length, sentBefore + 1, 'tablet-mode state re-sent on resume');
+assert.equal(globalThis.__transform, 0, 'panel turned back to normal on resume');
+ext8.disable(); flush();
+assert.equal(globalThis.__sleepCb, null, 'resume watch removed on disable');
 console.log('ALL TESTS PASSED');

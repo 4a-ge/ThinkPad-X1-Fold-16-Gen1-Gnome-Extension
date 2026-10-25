@@ -5,6 +5,8 @@ const system = {call(name, path, iface, method, params, rt, flags, timeout, canc
         if (globalThis.__fail) { const e = new Error('boom'); e.matches = () => false; throw e; } }}, {}));
 }};
 globalThis.__lock = false; globalThis.__transform = 1; globalThis.__applied = []; globalThis.__rotateFail = false;
+system.signal_subscribe = (n, i, s, p, a, f, cb) => { globalThis.__sleepCb = cb; return 42; };
+system.signal_unsubscribe = id => { globalThis.__sleepCb = null; };
 const session = {call(name, path, iface, method, params, rt, flags, timeout, cancellable, callback) {
     if (method === 'GetCurrentState') {
         const state = [7,
@@ -26,5 +28,5 @@ export default {
     File: {new_for_path() { return {
         query_exists() { return globalThis.__keyboardNode !== undefined; },
         load_contents() { return [true, new TextEncoder().encode(globalThis.__keyboardNode)]; }}; }},
-    icon_new_for_string(p) { return p; }, Cancellable, DBus: {system, session}, DBusCallFlags: {NONE: 0}, IOErrorEnum: {CANCELLED: 19},
+    icon_new_for_string(p) { return p; }, Cancellable, DBus: {system, session}, DBusCallFlags: {NONE: 0}, DBusSignalFlags: {NONE: 0}, IOErrorEnum: {CANCELLED: 19},
 };
