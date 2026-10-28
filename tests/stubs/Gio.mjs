@@ -9,7 +9,7 @@ system.signal_subscribe = (n, i, s, p, a, f, cb) => { globalThis.__sleepCb = cb;
 system.signal_unsubscribe = id => { globalThis.__sleepCb = null; };
 const session = {call(name, path, iface, method, params, rt, flags, timeout, cancellable, callback) {
     if (method === 'GetCurrentState') {
-        const state = [7,
+        const state = globalThis.__state ?? [7,
             [[['eDP-1', 'v', 'p', 's'], [['m1', 2560, 2024, 60, 1, [1], {}], ['m2', 2560, 2024, 60, 1, [1], {'is-current': true}]], {}]],
             [[0, 0, 1, globalThis.__transform, true, [['eDP-1', 'v', 'p', 's']], {}]], {}];
         globalThis.__pending.push(() => callback({call_finish() {

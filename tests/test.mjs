@@ -225,4 +225,36 @@ assert.equal(globalThis.__log.length, sentBefore + 1, 'tablet-mode state re-sent
 assert.equal(globalThis.__transform, 0, 'panel turned back to normal on resume');
 ext8.disable(); flush();
 assert.equal(globalThis.__sleepCb, null, 'resume watch removed on disable');
+// only the built-in panel is affected: external monitors are never rotated or covered
+const hdmi = ['DP-1', 'v', 'p', 's'];
+const edp = ['eDP-1', 'v', 'p', 's'];
+const modes = [['m1', 1920, 1080, 60, 1, [1], {'is-current': true}]];
+const monitorsState = [[edp, [['m2', 2560, 2024, 60, 1, [1], {'is-current': true}]], {'is-builtin': true}], [hdmi, modes, {}]];
+globalThis.__lock = false; globalThis.__applied.length = 0; globalThis.__transform = 1;
+globalThis.__state = [7, monitorsState,
+    [[0, 0, 1, 1, true, [edp], {}], [2560, 0, 1, 3, false, [hdmi], {}]], {}];
+const ext9 = new Ext({}); ext9.enable(); flush();
+if (ext9._wantedTabletMode) { click(); flush(); }
+assert.equal(globalThis.__applied.length, 1);
+assert.deepEqual(globalThis.__applied[0][2].map(lm => lm[3]), [0, 3], 'external monitor keeps its transform');
+ext9.disable(); flush();
+// panel mirrored with an external monitor: rotating would turn both, so nothing is applied
+globalThis.__applied.length = 0;
+globalThis.__state = [7, monitorsState, [[0, 0, 1, 1, true, [edp, hdmi], {}]], {}];
+const ext10 = new Ext({}); ext10.enable(); flush();
+if (ext10._wantedTabletMode) { click(); flush(); }
+assert.equal(globalThis.__applied.length, 0, 'mirrored external monitor is not rotated');
+ext10.disable(); flush();
+// no active built-in panel (lid closed): no overlay, no OSD, no insets, no rotation
+globalThis.__state = [7, [monitorsState[1]], [[0, 0, 1, 1, true, [hdmi], {}]], {}];
+globalThis.__noBuiltin = true; Main.osdWindowManager.shown.length = 0;
+const ext11 = new Ext({}); ext11.enable(); flush();
+if (ext11._wantedTabletMode) { click(); flush(); }
+assert.equal(globalThis.__applied.length, 0, 'external-only: nothing rotated');
+assert.equal(ext11._overlay.visible, false, 'external-only: overlay hidden');
+assert.equal(ext11._getInsetForMonitor(0), 0, 'external-only: no inset');
+ext11._showModeOsd();
+assert.equal(Main.osdWindowManager.shown.length, 0, 'external-only: no OSD');
+ext11.disable(); flush();
+globalThis.__noBuiltin = false; globalThis.__state = undefined;
 console.log('ALL TESTS PASSED');
