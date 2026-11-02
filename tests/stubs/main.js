@@ -23,7 +23,7 @@ connect(n, f) { this.onDestroy = f; return 1; } }
 export const screenShield = {_lockDialogGroup: new Box(null)};
 export const makeDialog = () => { const d = new Box(null); d.box = new Box(); d.add_child(d.box);
     screenShield._lockDialogGroup.add_child(d); return d; };
-globalThis.global = {backend: {get_monitor_manager: () => ({get_monitor_for_connector: c => c === 'eDP-1' ? 0 : -1})}};
+globalThis.global = {backend: {get_monitor_manager: () => ({get_monitor_for_connector: c => !globalThis.__noBuiltin && c === 'eDP-1' ? 0 : -1})}};
 
 export const makeModal = index => { const d = new Box(null); d._backgroundBin = new Box({index}); d.add_child(d._backgroundBin);
     layoutManager.modalDialogGroup.add_child(d); return d; };

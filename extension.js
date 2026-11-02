@@ -42,6 +42,11 @@ const DISPLAY_CONFIG_NAME = 'org.gnome.Mutter.DisplayConfig';
 const DISPLAY_CONFIG_PATH = '/org/gnome/Mutter/DisplayConfig';
 const DISPLAY_CONFIG_METHOD_TEMPORARY = 1;
 
+// logind announces suspend/resume with PrepareForSleep(b).
+const LOGIND_NAME = 'org.freedesktop.login1';
+const LOGIND_PATH = '/org/freedesktop/login1';
+const LOGIND_IFACE = 'org.freedesktop.login1.Manager';
+
 const KEYBOARD_POLL_SECONDS = 1;
 const DAEMON_RETRY_SECONDS = 2;
 const DBUS_TIMEOUT_MILLISECONDS = 2000;
@@ -106,6 +111,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._daemonRequestInFlight = false;
         this._daemonWarned = false;
         this._keybindingAdded = false;
+        this._sleepSubscriptionId = 0;
         this._cancellable = new Gio.Cancellable();
         this._keyboardAttachedFile = Gio.File.new_for_path(KEYBOARD_ATTACHED_PATH);
         this._hasKeyboardAttachedState = this._keyboardAttachedFile.query_exists(null);
@@ -129,7 +135,12 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._signals = [
             [
                 Main.layoutManager,
-                Main.layoutManager.connect('monitors-changed', () => this._syncGeometry()),
+                Main.layoutManager.connect('monitors-changed', () => {
+                    this._syncGeometry();
+                    // The panel may come back rotated (e.g. after resume).
+                    if (this._blocked)
+                        this._rotateBuiltinMonitor(LAPTOP_TRANSFORM);
+                }),
             ],
             // The overview and the lock screen lay themselves out as if the
             // whole monitor were free, so they are re-adjusted whenever the
@@ -146,6 +157,8 @@ export default class BottomHalfBlockerExtension extends Extension {
                 Main.overview.connect('showing', () => this._syncOverview(true)),
             ],
         ];
+
+        this._watchResume();
 
         this._refreshBlockedState();
 
@@ -168,6 +181,11 @@ export default class BottomHalfBlockerExtension extends Extension {
             source.disconnect(signalId);
 
         this._signals = null;
+
+        if (this._sleepSubscriptionId) {
+            Gio.DBus.system.signal_unsubscribe(this._sleepSubscriptionId);
+            this._sleepSubscriptionId = 0;
+        }
 
         this._removeInsetHooks();
 
@@ -205,6 +223,31 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._icons = null;
         this._toggleGesture = null;
         this._keyboardAttachedFile = null;
+    }
+
+    // After resume the daemon's tablet-mode switch and the panel's rotation
+    // can be back to their defaults, so both are sent again.
+    _watchResume() {
+        try {
+            this._sleepSubscriptionId = Gio.DBus.system.signal_subscribe(
+                LOGIND_NAME, LOGIND_IFACE, 'PrepareForSleep', LOGIND_PATH, null,
+                Gio.DBusSignalFlags.NONE,
+                (connection, sender, path, iface, signal, parameters) => {
+                    const [sleeping] = parameters.deepUnpack();
+                    if (!sleeping)
+                        this._onResume();
+                });
+        } catch (error) {
+            console.warn(`${this.uuid}: could not watch for resume: ${error.message}`);
+        }
+    }
+
+    _onResume() {
+        this._lastSentTabletMode = null;
+        this._syncDaemon();
+
+        if (this._blocked)
+            this._rotateBuiltinMonitor(LAPTOP_TRANSFORM);
     }
 
     _addToggleHandler() {
@@ -269,7 +312,7 @@ export default class BottomHalfBlockerExtension extends Extension {
     }
 
     // Shows the shell's own volume-style popup. It is moved into the visible
-    // half like the other popups, see _scanForMonitorActors().
+    // half like the other popups, see _installInsetHooks().
     _showModeOsd() {
         const monitor = this._findBuiltinMonitor();
         if (!monitor || !this._icons)
@@ -405,9 +448,17 @@ export default class BottomHalfBlockerExtension extends Extension {
     _applyTransform(state, transform) {
         const [serial, monitors, logicalMonitors] = state;
 
-        const monitorManager = global.backend.get_monitor_manager();
-        const builtin = BUILTIN_CONNECTORS.find(connector => monitorManager.get_monitor_for_connector(connector) >= 0);
+        // Mutter flags the laptop panel itself; the connector names are only
+        // a fallback. With no built-in panel (e.g. lid closed) nothing is
+        // touched, an external monitor is never rotated.
+        const builtin = monitors.find(monitor => monitor[2]?.['is-builtin'])?.[0][0] ??
+            BUILTIN_CONNECTORS.find(connector => monitors.some(m => m[0][0] === connector));
         if (!builtin)
+            return;
+
+        // A mirrored external monitor shares the panel's logical monitor and
+        // would be turned with it.
+        if (logicalMonitors.some(lm => lm[5].some(member => member[0] === builtin) && lm[5].length > 1))
             return;
 
         const currentModeId = connector => {
@@ -489,9 +540,10 @@ export default class BottomHalfBlockerExtension extends Extension {
         }
     }
 
-    // The built-in panel, not necessarily the primary monitor.
+    // The built-in panel, not necessarily the primary monitor. Null when it is
+    // not active (lid closed, docked): the modes then leave every monitor alone.
     _findBuiltinMonitor() {
-        const {monitors, primaryMonitor} = Main.layoutManager;
+        const {monitors} = Main.layoutManager;
 
         try {
             const monitorManager = global.backend.get_monitor_manager();
@@ -505,7 +557,7 @@ export default class BottomHalfBlockerExtension extends Extension {
             console.debug(`${this.uuid}: could not look up the built-in monitor: ${error}`);
         }
 
-        return primaryMonitor;
+        return null;
     }
 
     // The bottom half of the built-in monitor, i.e. the part the keyboard covers.
