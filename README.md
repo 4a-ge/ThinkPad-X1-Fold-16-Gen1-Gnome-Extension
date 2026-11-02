@@ -63,10 +63,10 @@ icon still works).
   ```
 - The extension starts in tablet mode after every login or shell restart. The
   choice is kept across screen lock and unlock.
-- Laptop mode also locks screen rotation and turns the built-in screen to normal
-  landscape, because the keyboard allows only that orientation. This stops auto-rotation
-  (including the Screen Rotate extension) from turning the screen when the laptop
-  is opened or moved. Tablet mode gives rotation back, unless you had locked it yourself.
+- Laptop mode also turns the built-in screen to normal landscape, because the
+  keyboard allows only that orientation. The auto-rotate setting is never touched:
+  with GNOME's tablet mode off, auto-rotation stops on its own. Tablet mode leaves
+  the rotation alone.
 - Disabling the extension switches GNOME back to tablet mode.
 
 If the kernel ever provides
@@ -83,7 +83,7 @@ stock Fedora kernel does not provide this file.
 | Daemon | Calls `SetTabletMode` on the system bus whenever the mode changes and at startup. Failed calls are retried every 2 seconds. |
 | Overview | Adds a bottom margin to the overview controls so the dash, workspaces and app grid stay in the visible half. It is re-applied on session changes and before the overview opens. |
 | Lock screen, dialogs, popups | Adds a constraint that shrinks the unlock dialog, each modal shell dialog and the volume/brightness popups (OSD) to the visible half, only on the built-in monitor. |
-| Rotation | In laptop mode, sets `orientation-lock` and applies a normal-landscape transform to the built-in monitor through Mutter's `DisplayConfig` D-Bus API (not persistent). |
+| Rotation | In laptop mode, applies a normal-landscape transform to the built-in monitor through Mutter's `DisplayConfig` D-Bus API (not persistent). |
 | Shortcut | A GSettings keybinding (`toggle-mode`). |
 
 The extension runs in the `user` and `unlock-dialog` session modes, so it stays
