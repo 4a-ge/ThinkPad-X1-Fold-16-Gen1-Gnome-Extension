@@ -18,7 +18,7 @@ by somefoo (GPL-3.0). See [License and credits](#license-and-credits).
 ## Status
 
 Written on and tested by hand only on **Fedora 44, GNOME Shell 50.5 (Wayland)**
-on an X1 Fold 16. `metadata.json` declares Shell 45–50, but the other versions
+on an X1 Fold 16. `metadata.json` declares Shell 45–51 (51 checked against the shell source only, not run), but the other versions
 are untested. The extension uses some private shell internals (see
 [Limitations](#limitations)), so a shell upgrade may need small fixes.
 
