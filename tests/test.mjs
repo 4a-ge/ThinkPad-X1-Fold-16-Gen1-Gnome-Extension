@@ -10,7 +10,8 @@ const calls = () => globalThis.__log.map(c => c.value);
 const click = () => globalThis.__gestures.at(-1).handlers.recognize();
 const T = globalThis.__timers;
 const fire = sec => { const f = T[sec]; if (!f) return; if (f() === false) delete T[sec]; };
-const controls = Main.overview._overview.controls;
+const overviewActor = Main.overview._overview;
+const overviewInset = () => overviewActor.constraints.at(-1)?._getInset() ?? 0;
 
 const ext = new Ext({});
 ext.enable(); flush();
@@ -24,7 +25,7 @@ assert.equal(Main.wm.kb.length, 1, 'keybinding registered');
 
 Main.wm.kb[0].cb(); flush();   // shortcut toggles
 assert.equal(ext._icon.gicon, '/ext/icons/laptop-symbolic.svg');
-assert.equal(controls.margin_bottom, 1280, 'overview margin = half of built-in monitor');
+assert.equal(overviewInset(), 1280, 'overview actor shrinks by half of built-in monitor');
 assert.deepEqual(ext._overlay.pos, [0, 1280]);
 assert.deepEqual(calls(), [true, false]);
 assert.equal(globalThis.__lock, false, 'laptop mode leaves auto-rotate alone');
@@ -37,7 +38,7 @@ assert.equal(globalThis.__transform, 0);
 click(); flush();
 assert.equal(globalThis.__lock, false, 'tablet mode leaves auto-rotate alone');
 assert.equal(ext._icon.gicon, '/ext/icons/tablet-symbolic.svg');
-assert.equal(controls.margin_bottom, 0, 'margin removed in tablet mode');
+assert.equal(overviewActor.constraints.length, 0, 'overview constraint removed in tablet mode');
 assert.equal(Main.layoutManager.chrome.length, 0);
 assert.deepEqual(calls(), [true, false, true]);
 
@@ -138,17 +139,20 @@ click(); flush();
 assert.equal(oc._getInset(), 0, 'tablet mode puts the OSD back');
 click(); flush();
 // forced overview resync (unlock / before opening) re-lays the overview out
-const before = controls.relayouts;
+const before = overviewActor.relayouts;
 ext._syncOverview(true);
-assert.equal(controls.margin_bottom, 1280);
-assert.ok(controls.relayouts > before, 'forced resync queues a relayout');
-// overview recovered even if something reset the margin behind our back
-controls.margin_bottom = 0;
+assert.equal(overviewInset(), 1280);
+assert.equal(overviewActor.constraints.length, 1, 'only one overview constraint');
+assert.ok(overviewActor.relayouts > before, 'forced resync queues a relayout');
+// overview recovered even if something removed the constraint behind our back
+overviewActor.constraints = [];
+ext._overviewConstraint = null;
 ext._syncOverview(true);
-assert.equal(controls.margin_bottom, 1280, 'forced resync restores a reset margin');
+assert.equal(overviewInset(), 1280, 'forced resync restores a missing constraint');
 
 globalThis.__lock = false;
 ext.disable(); flush();
+assert.equal(overviewActor.constraints.length, 0, 'overview constraint removed on disable');
 assert.equal(globalThis.__lock, false, 'auto-rotate untouched on disable');
 assert.equal(dlg.box.constraints.length, 1, 'lock constraints removed on disable');
 assert.equal(MonitorConstraint.prototype._init, originalInit, 'monitor constraint hook removed on disable');
@@ -157,7 +161,7 @@ assert.equal(sw.translation_y, 0, 'switcher popup put back on disable');
 assert.equal(modal._backgroundBin.constraints.length, 1, 'modal constraints removed on disable');
 assert.equal(osd.constraints.length, 1, 'OSD constraint removed on disable');
 assert.equal(calls().at(-1), true, 'tablet mode restored on disable');
-assert.equal(controls.margin_bottom, 0);
+assert.equal(overviewInset(), 0);
 assert.equal(Main.wm.kb.length, 0, 'keybinding removed');
 assert.equal(Main.layoutManager.chrome.length, 0);
 assert.equal(globalThis.__button.destroyed, true);

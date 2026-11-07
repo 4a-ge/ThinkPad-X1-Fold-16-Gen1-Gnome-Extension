@@ -9,7 +9,6 @@ export const layoutManager = {focusIndex: 0, overviewGroup: {children: []},prima
 export const wm = {kb: [], addKeybinding(n, s, f, m, cb) { if (globalThis.__noSchema) throw new Error('no schema'); if (globalThis.__refuse) return 0; this.kb.push({n, cb}); return 7; },
     removeKeybinding(n) { this.kb = this.kb.filter(k => k.n !== n); }};
 const sigs = () => ({connect() { return 7; }, disconnect() {}});
-export const overview = {_overview: {controls: {margin_bottom: 0, relayouts: 0, queue_relayout() { this.relayouts++; }}}, ...sigs()};
 export const sessionMode = {...sigs()};
 // props: the MonitorConstraint to create, or null for an actor without one
 class Box { constructor(props = {primary: true}) { this.constraints = []; this.relayouts = 0; this.children = []; this.parent = null;
@@ -20,6 +19,8 @@ get_constraints() { return this.constraints; }
 add_constraint(c) { this.constraints.push(c); c.actor = this; c.setActor?.(this); }
 remove_constraint(c) { this.constraints = this.constraints.filter(x => x !== c); } queue_relayout() { this.relayouts++; }
 connect(n, f) { this.onDestroy = f; return 1; } }
+const overviewActor = new Box(null); overviewActor.controls = new Box(null);
+export const overview = {_overview: overviewActor, ...sigs()};
 export const screenShield = {_lockDialogGroup: new Box(null)};
 export const makeDialog = () => { const d = new Box(null); d.box = new Box(); d.add_child(d.box);
     screenShield._lockDialogGroup.add_child(d); return d; };
