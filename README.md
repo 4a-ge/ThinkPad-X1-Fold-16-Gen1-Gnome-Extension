@@ -81,7 +81,7 @@ stock Fedora kernel does not provide this file.
 | --- | --- |
 | Overlay | A black actor over the bottom half of the built-in monitor, registered as shell chrome with a strut, so maximized windows stay in the top half and the covered area does not receive input. |
 | Daemon | Calls `SetTabletMode` on the system bus whenever the mode changes and at startup. Failed calls are retried every 2 seconds. |
-| Overview | Adds a bottom margin to the overview controls so the dash, workspaces and app grid stay in the visible half. It is re-applied on session changes and before the overview opens. |
+| Overview | Shrinks the overview actor itself (not just its controls) so the dash, workspaces and app grid stay in the visible half. It is re-applied on session changes and before the overview opens. |
 | Lock screen, dialogs, popups | Adds a constraint that shrinks the unlock dialog, each modal shell dialog and the volume/brightness popups (OSD) to the visible half, only on the built-in monitor. |
 | Rotation | In laptop mode, applies a normal-landscape transform to the built-in monitor through Mutter's `DisplayConfig` D-Bus API (not persistent). |
 | Shortcut | A GSettings keybinding (`toggle-mode`). |

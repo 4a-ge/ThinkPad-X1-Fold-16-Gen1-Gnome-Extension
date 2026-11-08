@@ -100,6 +100,7 @@ export default class BottomHalfBlockerExtension extends Extension {
         this._keyboardAttached = false;
         this._overlay = null;
         this._overviewMargin = 0;
+        this._overviewConstraint = null;
         this._insetConstraints = new Map();
         this._switcherPopups = new Set();
         this._insetHooksInstalled = false;
@@ -630,27 +631,35 @@ export default class BottomHalfBlockerExtension extends Extension {
         return this._getInsetForMonitor(Main.layoutManager.primaryMonitor?.index);
     }
 
-    // The overview lays itself out over the whole primary monitor (struts only
-    // move its top edge), so it would extend under the overlay. A bottom
-    // margin on its controls keeps the dash, workspaces and app grid in the
-    // visible half. With force the margin is re-applied even if unchanged, to
-    // make the overview lay itself out again (after unlock, before opening).
+    // The overview actor is sized to the whole primary monitor by a
+    // MonitorConstraint (struts only move its top edge), so the dash,
+    // workspaces and app grid would extend under the overlay. The overview
+    // actor itself is shrunk with a BottomInsetConstraint, which works the
+    // same whatever the shell does inside its controls (a margin on the
+    // controls was not honoured by the latest shells). With force the overview
+    // is laid out again (after unlock, before opening). Tablet mode removes
+    // the constraint again.
     _syncOverview(force = false) {
         const margin = this._getPrimaryInset();
 
         if (margin === this._overviewMargin && !force)
             return;
 
-        const controls = Main.overview?._overview?.controls;
-        if (!controls)
+        const overviewActor = Main.overview?._overview;
+        if (!overviewActor)
             return;
 
         try {
-            if (force && margin > 0)
-                controls.margin_bottom = 0;
+            if (margin > 0 && !this._overviewConstraint) {
+                this._overviewConstraint = new BottomInsetConstraint(() => this._getPrimaryInset());
+                overviewActor.add_constraint(this._overviewConstraint);
+            } else if (margin === 0 && this._overviewConstraint) {
+                overviewActor.remove_constraint(this._overviewConstraint);
+                this._overviewConstraint = null;
+            }
 
-            controls.margin_bottom = margin;
-            controls.queue_relayout();
+            overviewActor.queue_relayout();
+            overviewActor.controls?.queue_relayout();
             this._overviewMargin = margin;
         } catch (error) {
             console.warn(`${this.uuid}: could not adjust the overview: ${error.message}`);
